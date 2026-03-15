@@ -2,12 +2,27 @@
 /**
  * 学唱合成录音预览弹窗：展示时长、大小、格式、音频播放与保存/删除操作
  */
+import { ref, watch } from "vue";
+
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   reviewRecord: { type: Object, default: null },
 });
 
 const emit = defineEmits(["save-review", "discard-review"]);
+const nameDraft = ref("");
+
+function getDefaultName(record) {
+  return record?.customName || record?.songName || "我的演唱";
+}
+
+watch(
+  () => props.reviewRecord,
+  (record) => {
+    nameDraft.value = getDefaultName(record);
+  },
+  { immediate: true }
+);
 
 function close() {
   emit("discard-review");
@@ -27,7 +42,7 @@ function formatSize(sizeBytes) {
 }
 
 function onSave() {
-  emit("save-review");
+  emit("save-review", String(nameDraft.value || "").trim());
 }
 
 function onDiscard() {
@@ -49,6 +64,10 @@ function onDiscard() {
             <span class="meta-item">大小 {{ formatSize(reviewRecord.sizeBytes) }}</span>
             <span class="meta-item">{{ reviewRecord.format?.toUpperCase() }}</span>
           </div>
+          <div class="name-editor">
+            <label class="name-label">录音名称</label>
+            <input v-model.trim="nameDraft" class="name-input" type="text" maxlength="64" placeholder="请输入录音名称" />
+          </div>
           <audio
             class="review-audio"
             :src="reviewRecord.mixFileUriWeb || reviewRecord.mixFileUri"
@@ -56,7 +75,7 @@ function onDiscard() {
             preload="metadata"
           />
           <div class="review-actions">
-            <button class="action-btn btn-save" @click="onSave">保存到本地</button>
+            <button class="action-btn btn-save" @click="onSave">保存到歌单</button>
             <button class="action-btn btn-delete" @click="onDiscard">删除</button>
           </div>
         </div>
@@ -155,6 +174,29 @@ function onDiscard() {
   width: 100%;
   height: 40px;
   margin-bottom: 14px;
+}
+
+.name-editor {
+  margin-bottom: 12px;
+}
+
+.name-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  color: #075985;
+}
+
+.name-input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0c4a6e;
+  font-size: 0.82rem;
 }
 
 .review-actions {

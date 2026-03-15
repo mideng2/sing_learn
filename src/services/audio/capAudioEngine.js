@@ -5,6 +5,7 @@ const SingingAudio = registerPlugin("SingingAudio");
 export function createCapAudioEngine() {
   const engineType = "capacitor-native";
   let sessionInstrumentSrc = "";
+  let sessionStartAtSec = 0;
   let mixSettings = {
     instrumentVolume: 0.72,
     voiceVolume: 1,
@@ -27,14 +28,16 @@ export function createCapAudioEngine() {
 
   async function startSession(options) {
     const instrumentSrc = options.instrumentSrc || "";
+    const startAtSec = Math.max(0, Number(options.startAtSec) || 0);
     if (!instrumentSrc) {
       throw new Error("缺少伴奏音频地址");
     }
     sessionInstrumentSrc = instrumentSrc;
+    sessionStartAtSec = startAtSec;
     const nextMixSettings = resolveMixSettings(options.mixSettings);
-    console.log("[CapAudio] startSession →", { instrumentSrc });
+    console.log("[CapAudio] startSession →", { instrumentSrc, startAtSec });
     try {
-      await SingingAudio.startRecording({ instrumentSrc, ...nextMixSettings });
+      await SingingAudio.startRecording({ instrumentSrc, startAtSec, ...nextMixSettings });
       console.log("[CapAudio] startSession ✓");
     } catch (err) {
       console.error("[CapAudio] startSession ✗", err);
@@ -61,6 +64,7 @@ export function createCapAudioEngine() {
       console.log("[CapAudio] stopSession ✓", result);
       return {
         instrumentSrc: sessionInstrumentSrc,
+        startAtSec: Number(result.startAtSec) || sessionStartAtSec || 0,
         voiceFileUri: result.voiceFileUri || "",
         voiceFileUriWeb: result.voiceFileUri ? Capacitor.convertFileSrc(result.voiceFileUri) : "",
         durationMs: result.durationMs || 0,
@@ -76,6 +80,7 @@ export function createCapAudioEngine() {
     const params = {
       instrumentSrc: rawSession.instrumentSrc || song.instrument,
       voiceFileUri: rawSession.voiceFileUri,
+      startAtSec: Math.max(0, Number(rawSession.startAtSec) || 0),
       songId: song.id,
       ...nextMixSettings,
     };
@@ -88,6 +93,7 @@ export function createCapAudioEngine() {
         mixFileUriWeb: result.mixFileUri ? Capacitor.convertFileSrc(result.mixFileUri) : "",
         voiceFileUri: rawSession.voiceFileUri,
         voiceFileUriWeb: rawSession.voiceFileUriWeb || "",
+      startAtSec: Math.max(0, Number(rawSession.startAtSec) || 0),
         durationMs: result.durationMs || rawSession.durationMs || 0,
         sizeBytes: result.sizeBytes || 0,
         format: result.format || "m4a",
@@ -127,6 +133,7 @@ export function createCapAudioEngine() {
       mixFileUriWeb,
       voiceFileUri: mixResult.voiceFileUri || "",
       voiceFileUriWeb: mixResult.voiceFileUriWeb || mixResult.voiceFileUri || "",
+      startAtSec: Math.max(0, Number(mixResult.startAtSec) || 0),
       durationMs: mixResult.durationMs,
       sizeBytes: mixResult.sizeBytes,
       format: mixResult.format,

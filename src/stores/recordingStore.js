@@ -37,6 +37,7 @@ export const useRecordingStore = defineStore("recording", () => {
       id: payload.id || createRecordingId(),
       songId: payload.songId || "",
       songName: payload.songName || "",
+      customName: payload.customName || payload.songName || "未命名录音",
       singer: payload.singer || "",
       mixFileUri: payload.mixFileUri || "",
       mixFileUriWeb: payload.mixFileUriWeb || payload.mixFileUri || "",
@@ -67,6 +68,19 @@ export const useRecordingStore = defineStore("recording", () => {
     persist();
   }
 
+  function updateRecordingName(recordId, name) {
+    const idx = recordings.value.findIndex((item) => item.id === recordId);
+    if (idx === -1) return null;
+    const nextName = String(name || "").trim();
+    if (!nextName) return null;
+    recordings.value[idx] = {
+      ...recordings.value[idx],
+      customName: nextName,
+    };
+    persist();
+    return recordings.value[idx];
+  }
+
   function getBySong(songId) {
     return recordings.value.filter((item) => item.songId === songId);
   }
@@ -78,6 +92,7 @@ export const useRecordingStore = defineStore("recording", () => {
     addRecording,
     removeRecording,
     clearRecordings,
+    updateRecordingName,
     getBySong,
   };
 });

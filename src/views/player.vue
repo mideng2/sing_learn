@@ -95,15 +95,19 @@ function goBack() {
 
 async function onToggleSing() {
   if (!song.value) return;
+  // 若用户刚拖完进度条立即点击学唱，先落地拖动位置再开录。
+  endDrag();
+  const rawStartAtSec = Math.max(0, Number(currentTime.value) || 0);
+  const maxStartAtSec = Math.max(0, Number(duration.value) || 0);
+  const startAtSec = maxStartAtSec > 0 ? Math.min(rawStartAtSec, maxStartAtSec) : rawStartAtSec;
   if (!isRecording.value) {
     if (isPlaying.value) togglePlay();
-    seekTo(0);
   }
-  await toggleSing(song.value);
+  await toggleSing(song.value, { startAtSec });
 }
 
-function onSaveReview() {
-  saveReviewRecord();
+function onSaveReview(customName) {
+  saveReviewRecord(customName);
 }
 
 async function onDiscardReview() {

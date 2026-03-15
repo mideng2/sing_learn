@@ -56,6 +56,7 @@ export function createWebAudioEngine() {
   let chunks = [];
   let recordStartTs = 0;
   let instrumentSrc = "";
+  let sessionStartAtSec = 0;
   let instrumentHowl = null;
 
   let audioContext = null;
@@ -70,12 +71,13 @@ export function createWebAudioEngine() {
   let recordedBuffers = [];
   let recordingSampleRate = 44100;
 
-  function resolveMixDurationSeconds(instrumentDuration, voiceDuration) {
-    if (voiceDuration > 0 && instrumentDuration > 0) {
-      return Math.min(voiceDuration, instrumentDuration);
+  function resolveMixDurationSeconds(instrumentDuration, voiceDuration, startAtSec = 0) {
+    const availableInstrumentDuration = Math.max(0, instrumentDuration - Math.max(0, startAtSec));
+    if (voiceDuration > 0 && availableInstrumentDuration > 0) {
+      return Math.min(voiceDuration, availableInstrumentDuration);
     }
     if (voiceDuration > 0) return voiceDuration;
-    if (instrumentDuration > 0) return instrumentDuration;
+    if (availableInstrumentDuration > 0) return availableInstrumentDuration;
     return 0;
   }
 
@@ -193,6 +195,7 @@ export function createWebAudioEngine() {
 
   async function startSession(options) {
     instrumentSrc = options.instrumentSrc || "";
+    sessionStartAtSec = Math.max(0, Number(options.startAtSec) || 0);
     if (!instrumentSrc) {
       throw new Error("缺少伴奏音频地址");
     }
@@ -223,7 +226,10 @@ export function createWebAudioEngine() {
     });
 
     applyLiveMixSettings();
-    instrumentHowl.play();
+    const soundId = instrumentHowl.play();
+    instrumentHowl.once("play", () => {
+      instrumentHowl.seek(sessionStartAtSec, soundId);
+    }, soundId);
     recordStartTs = Date.now();
   }
 
@@ -235,7 +241,7 @@ export function createWebAudioEngine() {
   }
 
   function getLiveMetrics() {
-    const currentTime = instrumentHowl && instrumentHowl.playing() ? Number(instrumentHowl.seek()) || 0 : 0;
+    const currentTime = instrumentHowl && instrumentHowl.playing() ? Number(instrumentHowl.seek()) || sessionStartAtSec : sessionStartAtSec;
     return { level: liveLevel, currentTime };
   }
 
@@ -254,6 +260,7 @@ export function createWebAudioEngine() {
 
     const rawSession = {
       instrumentSrc,
+      startAtSec: sessionStartAtSec,
       voiceAudioBuffer,
       durationMs,
     };
@@ -281,7 +288,8 @@ export function createWebAudioEngine() {
     ]);
     await tempContext.close();
 
-    const mixDuration = resolveMixDurationSeconds(instrumentBuffer.duration, voiceBuffer.duration);
+    const startAtSec = Math.max(0, Number(rawSession.startAtSec) || 0);
+    const mixDuration = resolveMixDurationSeconds(instrumentBuffer.duration, voiceBuffer.duration, startAtSec);
     const length = Math.max(1, Math.ceil(mixDuration * sampleRate));
     const channels = 2;
     const offline = new OfflineAudioContext(channels, length, sampleRate);
@@ -291,7 +299,7 @@ export function createWebAudioEngine() {
     const instrumentGain = offline.createGain();
     instrumentGain.gain.value = instrumentVolume;
     instrumentSource.connect(instrumentGain).connect(offline.destination);
-    instrumentSource.start(0, 0, mixDuration || instrumentBuffer.duration);
+    instrumentSource.start(0, startAtSec, mixDuration || Math.max(0, instrumentBuffer.duration - startAtSec));
 
     const voiceSource = offline.createBufferSource();
     voiceSource.buffer = voiceBuffer;
@@ -307,6 +315,7 @@ export function createWebAudioEngine() {
     return {
       mixBlob,
       voiceBlob: encodeWavFromAudioBuffer(voiceBuffer),
+      startAtSec,
       durationMs,
       sizeBytes: mixBlob.size,
       format: "wav",
@@ -325,6 +334,7 @@ export function createWebAudioEngine() {
       singer: song.singer,
       mixFileUri,
       voiceFileUri,
+      startAtSec: Math.max(0, Number(mixResult.startAtSec) || 0),
       durationMs: mixResult.durationMs,
       sizeBytes: mixResult.sizeBytes,
       format: mixResult.format,

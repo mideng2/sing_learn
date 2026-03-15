@@ -12,6 +12,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stopRecording", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateMixSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "mixAudio", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "prepareExportFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "abortSession", returnType: CAPPluginReturnPromise)
     ]
@@ -27,6 +28,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var preferredBluetoothInput: AVAudioSessionPortDescription?
     private var instrumentVolume: Float = 0.72
     private var voiceVolume: Float = 1.0
+    private var recordStartOffsetSec: TimeInterval = 0
     private var isRecording = false
     private var recordStartedAt: Date?
     private var currentVoiceUrl: URL?
@@ -36,6 +38,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func startRecording(_ call: CAPPluginCall) {
         let instrumentSrc = call.getString("instrumentSrc") ?? ""
+        let startAtSec = max(0.0, doubleFromCall(call, key: "startAtSec") ?? 0.0)
         requestRecordPermission { granted in
             guard granted else {
                 call.reject("麦克风权限被拒绝")
@@ -73,6 +76,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
                 self.currentVoiceUrl = voiceUrl
                 self.recordStartedAt = Date()
+                self.recordStartOffsetSec = startAtSec
                 self.isRecording = true
                 self.logAudioRoute("after-recorder-start")
 
@@ -86,7 +90,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
 
                 // 伴奏
-                self.startInstrumentPlayback(instrumentSrc)
+                self.startInstrumentPlayback(instrumentSrc, startAtSec: startAtSec)
                 self.logAudioRoute("after-instrument-start")
 
                 call.resolve(["ok": true])
@@ -106,7 +110,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         recorder.updateMeters()
         let power = recorder.averagePower(forChannel: 0)
         let normalized = max(0.0, min(1.0, (power + 60.0) / 60.0))
-        let elapsed = Date().timeIntervalSince(recordStartedAt ?? Date())
+        let elapsed = Date().timeIntervalSince(recordStartedAt ?? Date()) + recordStartOffsetSec
 
         call.resolve([
             "level": normalized,
@@ -147,7 +151,8 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let duration = Date().timeIntervalSince(recordStartedAt ?? Date())
         call.resolve([
             "voiceFileUri": currentVoiceUrl?.absoluteString ?? "",
-            "durationMs": Int(duration * 1000.0)
+            "durationMs": Int(duration * 1000.0),
+            "startAtSec": recordStartOffsetSec
         ])
     }
 
@@ -157,6 +162,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let instrumentSrc = call.getString("instrumentSrc") ?? ""
+        let startAtSec = max(0.0, doubleFromCall(call, key: "startAtSec") ?? 0.0)
         applyMixSettings(from: call)
 
         guard let voiceUrl = resolveUrl(from: voiceUri) else {
@@ -190,7 +196,12 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        exportMixedM4A(instrumentUrl: instrumentUrl, voiceUrl: voiceUrl, outputUrl: outputUrl) { success, duration, message in
+        exportMixedM4A(
+            instrumentUrl: instrumentUrl,
+            voiceUrl: voiceUrl,
+            outputUrl: outputUrl,
+            instrumentStartSec: startAtSec
+        ) { success, duration, message in
             if success {
                 mixCompletion(outputUrl, duration)
             } else {
@@ -206,6 +217,29 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         removeFileIfExists(at: url)
         call.resolve(["ok": true])
+    }
+
+    @objc func prepareExportFile(_ call: CAPPluginCall) {
+        guard let sourceUri = call.getString("sourceUri"), let sourceUrl = resolveUrl(from: sourceUri) else {
+            call.reject("sourceUri 无效")
+            return
+        }
+        let rawFileName = call.getString("fileName") ?? sourceUrl.lastPathComponent
+        let fileName = sanitizedFileName(rawFileName, fallback: sourceUrl.lastPathComponent)
+        let exportDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("exports", isDirectory: true)
+        let targetUrl = exportDir.appendingPathComponent(fileName)
+
+        do {
+            try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+            removeFileIfExists(at: targetUrl)
+            try FileManager.default.copyItem(at: sourceUrl, to: targetUrl)
+            call.resolve([
+                "fileUri": targetUrl.absoluteString,
+                "fileName": fileName
+            ])
+        } catch {
+            call.reject("导出文件准备失败: \(error.localizedDescription)")
+        }
     }
 
     @objc func abortSession(_ call: CAPPluginCall) {
@@ -303,7 +337,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - 伴奏播放
 
-    private func startInstrumentPlayback(_ instrumentSrc: String) {
+    private func startInstrumentPlayback(_ instrumentSrc: String, startAtSec: TimeInterval) {
         guard let instrumentUrl = resolveUrl(from: instrumentSrc) else {
             print("[SingingAudio] instrument url resolve failed: \(instrumentSrc)")
             return
@@ -312,6 +346,8 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             player = try AVAudioPlayer(contentsOf: instrumentUrl)
             player?.volume = min(1.0, instrumentVolume)
             player?.prepareToPlay()
+            let safeStartAtSec = max(0.0, min(startAtSec, max(0.0, (player?.duration ?? 0) - 0.001)))
+            player?.currentTime = safeStartAtSec
             let played = player?.play() ?? false
             print("[SingingAudio] instrument play: ok=\(played), url=\(instrumentUrl.lastPathComponent)")
         } catch {
@@ -357,11 +393,21 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func exportMixedM4A(instrumentUrl: URL, voiceUrl: URL, outputUrl: URL, completion: @escaping (Bool, TimeInterval, String?) -> Void) {
+    private func exportMixedM4A(
+        instrumentUrl: URL,
+        voiceUrl: URL,
+        outputUrl: URL,
+        instrumentStartSec: TimeInterval,
+        completion: @escaping (Bool, TimeInterval, String?) -> Void
+    ) {
         let composition = AVMutableComposition()
         let instrumentAsset = AVURLAsset(url: instrumentUrl)
         let voiceAsset = AVURLAsset(url: voiceUrl)
-        let targetDuration = preferredMixDuration(instrumentDuration: instrumentAsset.duration, voiceDuration: voiceAsset.duration)
+        let instrumentDurationSeconds = CMTimeGetSeconds(instrumentAsset.duration)
+        let safeStartSec = min(max(0.0, instrumentStartSec), max(0.0, instrumentDurationSeconds - 0.001))
+        let instrumentStart = CMTime(seconds: safeStartSec, preferredTimescale: 600)
+        let remainingInstrumentDuration = CMTimeSubtract(instrumentAsset.duration, instrumentStart)
+        let targetDuration = preferredMixDuration(instrumentDuration: remainingInstrumentDuration, voiceDuration: voiceAsset.duration)
 
         guard
             let instrumentTrack = instrumentAsset.tracks(withMediaType: .audio).first,
@@ -380,7 +426,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         do {
             try compositionInstrument.insertTimeRange(
-                CMTimeRange(start: .zero, duration: targetDuration),
+                CMTimeRange(start: instrumentStart, duration: targetDuration),
                 of: instrumentTrack,
                 at: .zero
             )
@@ -548,5 +594,21 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         if FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    private func sanitizedFileName(_ raw: String, fallback: String) -> String {
+        var invalidChars = CharacterSet(charactersIn: "<>:\"/\\|?*")
+        invalidChars.formUnion(.controlCharacters)
+        let cleaned = raw.unicodeScalars.map { scalar in
+            invalidChars.contains(scalar) ? "_" : String(scalar)
+        }.joined()
+        var result = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.isEmpty {
+            result = fallback
+        }
+        if result.isEmpty {
+            result = "我的演唱.m4a"
+        }
+        return String(result.prefix(96))
     }
 }

@@ -109,14 +109,21 @@ export function useSingSession() {
     reviewRecord.value = null;
   }
 
-  async function startSing(song) {
+  function normalizeStartAtSec(value) {
+    const next = Number(value);
+    if (Number.isNaN(next)) return 0;
+    return Math.max(0, next);
+  }
+
+  async function startSing(song, startAtSec = 0) {
     if (!song || !song.instrument) {
       errorMessage.value = "该歌曲暂不支持学唱";
       return;
     }
 
     errorMessage.value = "";
-    singCurrentTime.value = 0;
+    const resolvedStartAtSec = normalizeStartAtSec(startAtSec);
+    singCurrentTime.value = resolvedStartAtSec;
     resetWave();
 
     await clearReviewRecord();
@@ -124,7 +131,11 @@ export function useSingSession() {
     console.log("[SingSession] startSing →", { songId: song?.id, instrument: song?.instrument });
 
     try {
-      await audioEngine.startSession({ instrumentSrc: song.instrument, mixSettings: mixSettings.value });
+      await audioEngine.startSession({
+        instrumentSrc: song.instrument,
+        mixSettings: mixSettings.value,
+        startAtSec: resolvedStartAtSec,
+      });
       audioEngineType.value = audioEngine.engineType;
       console.log("[SingSession] recording started, engine:", audioEngine.engineType);
       status.value = "recording";
@@ -163,18 +174,25 @@ export function useSingSession() {
     }
   }
 
-  async function toggleSing(song) {
+  async function toggleSing(song, options = {}) {
     if (isBusy.value) return;
     if (isRecording.value) {
       await stopSing(song);
       return;
     }
-    await startSing(song);
+    await startSing(song, options.startAtSec);
   }
 
-  function saveReviewRecord() {
+  function saveReviewRecord(customName = "") {
     if (!reviewRecord.value) return null;
-    const saved = recordingStore.addRecording(reviewRecord.value);
+    const nextName = String(customName || "").trim();
+    const payload = nextName
+      ? {
+          ...reviewRecord.value,
+          customName: nextName,
+        }
+      : reviewRecord.value;
+    const saved = recordingStore.addRecording(payload);
     reviewRecord.value = null;
     status.value = "idle";
     errorMessage.value = "";
