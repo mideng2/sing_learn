@@ -10,6 +10,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "startRecording", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getLiveMetrics", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopRecording", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateMixSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "mixAudio", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "abortSession", returnType: CAPPluginReturnPromise)
@@ -17,6 +18,11 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
+    private var monitorEngine: AVAudioEngine?
+    private var monitorMixer: AVAudioMixerNode?
+    private var preferredBluetoothInput: AVAudioSessionPortDescription?
+    private var instrumentVolume: Float = 0.72
+    private var voiceVolume: Float = 1.0
     private var isRecording = false
     private var recordStartedAt: Date?
     private var currentVoiceUrl: URL?
@@ -30,6 +36,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             }
 
             do {
+                self.applyMixSettings(from: call)
                 try self.configureAudioSessionForRecording()
                 let voiceUrl = self.makeTempVoiceURL()
                 let settings: [String: Any] = [
@@ -52,6 +59,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.currentVoiceUrl = voiceUrl
                 self.recordStartedAt = Date()
                 self.isRecording = true
+                try? self.startMicrophoneMonitoringIfPossible()
 
                 // 伴奏播放：此骨架优先保证可编译与可调用。若伴奏 URL 不可被原生读取，不阻塞录音。
                 self.startInstrumentPlaybackIfPossible(instrumentSrc)
@@ -86,6 +94,16 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         ])
     }
 
+    @objc func updateMixSettings(_ call: CAPPluginCall) {
+        applyMixSettings(from: call)
+        applyLiveMixSettings()
+        call.resolve([
+            "ok": true,
+            "instrumentVolume": instrumentVolume,
+            "voiceVolume": voiceVolume
+        ])
+    }
+
     @objc func stopRecording(_ call: CAPPluginCall) {
         guard isRecording else {
             call.reject("当前没有录音会话")
@@ -93,6 +111,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         recorder?.stop()
         player?.stop()
+        stopMicrophoneMonitoring()
         isRecording = false
 
         let duration = Date().timeIntervalSince(recordStartedAt ?? Date())
@@ -162,6 +181,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func abortSession(_ call: CAPPluginCall) {
         recorder?.stop()
         player?.stop()
+        stopMicrophoneMonitoring()
         isRecording = false
         call.resolve(["ok": true])
     }
@@ -181,19 +201,96 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func configureAudioSessionForRecording() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .mixWithOthers])
+        preferredBluetoothInput = preferredBluetoothHFPInput()
+        let categoryOptions: AVAudioSession.CategoryOptions = preferredBluetoothInput == nil
+            ? [.allowBluetooth, .allowBluetoothA2DP]
+            : [.allowBluetooth]
+
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: categoryOptions)
+        try session.setPreferredIOBufferDuration(0.005)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        preferHeadsetInputIfAvailable()
+    }
+
+    private func preferredBluetoothHFPInput() -> AVAudioSessionPortDescription? {
+        let session = AVAudioSession.sharedInstance()
+        return session.availableInputs?.first(where: { $0.portType == .bluetoothHFP })
+    }
+
+    private func preferHeadsetInputIfAvailable() {
+        let session = AVAudioSession.sharedInstance()
+        if let bluetoothInput = preferredBluetoothInput {
+            try? session.setPreferredInput(bluetoothInput)
+            return
+        }
+
+        let preferredPortTypes: [AVAudioSession.Port] = [.headsetMic, .bluetoothLE]
+        guard let availableInputs = session.availableInputs else { return }
+        if let preferredInput = availableInputs.first(where: { preferredPortTypes.contains($0.portType) }) {
+            try? session.setPreferredInput(preferredInput)
+            return
+        }
+        try? session.setPreferredInput(nil)
+    }
+
+    private func startMicrophoneMonitoringIfPossible() throws {
+        stopMicrophoneMonitoring()
+
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        let mixer = AVAudioMixerNode()
+
+        engine.attach(mixer)
+        engine.connect(inputNode, to: mixer, format: inputFormat)
+        engine.connect(mixer, to: engine.mainMixerNode, format: inputFormat)
+        mixer.volume = voiceVolume
+
+        engine.prepare()
+        try engine.start()
+
+        monitorEngine = engine
+        monitorMixer = mixer
+    }
+
+    private func stopMicrophoneMonitoring() {
+        guard let engine = monitorEngine else { return }
+        if let mixer = monitorMixer {
+            engine.disconnectNodeInput(mixer)
+            engine.disconnectNodeOutput(mixer)
+            engine.detach(mixer)
+        }
+        engine.stop()
+        engine.reset()
+        monitorMixer = nil
+        monitorEngine = nil
     }
 
     private func startInstrumentPlaybackIfPossible(_ instrumentSrc: String) {
         guard let instrumentUrl = resolveUrl(from: instrumentSrc) else { return }
         do {
             player = try AVAudioPlayer(contentsOf: instrumentUrl)
+            player?.volume = instrumentVolume
             player?.prepareToPlay()
             player?.play()
         } catch {
             // 伴奏播放失败不阻断录音
         }
+    }
+
+    private func applyMixSettings(from call: CAPPluginCall) {
+        instrumentVolume = normalizedVolume(call.getDouble("instrumentVolume"), fallback: instrumentVolume)
+        voiceVolume = normalizedVolume(call.getDouble("voiceVolume"), fallback: voiceVolume)
+    }
+
+    private func normalizedVolume(_ value: Double?, fallback: Float) -> Float {
+        guard let value else { return fallback }
+        return Float(max(0.0, min(1.5, value)))
+    }
+
+    private func applyLiveMixSettings() {
+        player?.volume = instrumentVolume
+        monitorMixer?.volume = voiceVolume
     }
 
     private func resolveUrl(from raw: String) -> URL? {
@@ -264,6 +361,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let composition = AVMutableComposition()
         let instrumentAsset = AVURLAsset(url: instrumentUrl)
         let voiceAsset = AVURLAsset(url: voiceUrl)
+        let targetDuration = preferredMixDuration(instrumentDuration: instrumentAsset.duration, voiceDuration: voiceAsset.duration)
 
         guard
             let instrumentTrack = instrumentAsset.tracks(withMediaType: .audio).first,
@@ -275,14 +373,19 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
+        guard targetDuration.isValid, targetDuration.seconds > 0 else {
+            exportSingleTrackM4A(inputUrl: voiceUrl, outputUrl: outputUrl, completion: completion)
+            return
+        }
+
         do {
             try compositionInstrument.insertTimeRange(
-                CMTimeRange(start: .zero, duration: instrumentAsset.duration),
+                CMTimeRange(start: .zero, duration: targetDuration),
                 of: instrumentTrack,
                 at: .zero
             )
             try compositionVoice.insertTimeRange(
-                CMTimeRange(start: .zero, duration: voiceAsset.duration),
+                CMTimeRange(start: .zero, duration: targetDuration),
                 of: voiceTrack,
                 at: .zero
             )
@@ -295,16 +398,39 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             completion(false, 0, "导出器创建失败")
             return
         }
+
+        let instrumentMix = AVMutableAudioMixInputParameters(track: compositionInstrument)
+        instrumentMix.setVolume(instrumentVolume, at: .zero)
+        let voiceMix = AVMutableAudioMixInputParameters(track: compositionVoice)
+        voiceMix.setVolume(voiceVolume, at: .zero)
+        let audioMix = AVMutableAudioMix()
+        audioMix.inputParameters = [instrumentMix, voiceMix]
+
         exporter.outputURL = outputUrl
         exporter.outputFileType = .m4a
+        exporter.audioMix = audioMix
         exporter.exportAsynchronously {
             DispatchQueue.main.async {
                 if exporter.status == .completed {
-                    completion(true, CMTimeGetSeconds(composition.duration), nil)
+                    completion(true, CMTimeGetSeconds(targetDuration), nil)
                 } else {
                     completion(false, 0, exporter.error?.localizedDescription ?? "导出失败")
                 }
             }
         }
+    }
+
+    private func preferredMixDuration(instrumentDuration: CMTime, voiceDuration: CMTime) -> CMTime {
+        let voiceSeconds = CMTimeGetSeconds(voiceDuration)
+        let instrumentSeconds = CMTimeGetSeconds(instrumentDuration)
+
+        if voiceSeconds.isFinite, voiceSeconds > 0 {
+            if instrumentSeconds.isFinite, instrumentSeconds > 0 {
+                return CMTimeMinimum(voiceDuration, instrumentDuration)
+            }
+            return voiceDuration
+        }
+
+        return instrumentDuration
     }
 }

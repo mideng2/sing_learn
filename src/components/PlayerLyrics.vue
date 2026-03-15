@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
     transform: scale(1);
 
     .lyric-0 {
-      color: #5f137f;
+      color: #033954;
     }
     .lyric-1 {
       color: #004c72;

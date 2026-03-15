@@ -1,9 +1,6 @@
 <script setup lang="js">
-import { ref, onBeforeUnmount } from "vue";
-import playIcon from "@/assets/icons/player-play.svg";
-import pauseIcon from "@/assets/icons/player-pause.svg";
-import micIcon from "@/assets/icons/player-mic.svg";
-import lyricsIcon from "@/assets/icons/player-lyrics.svg";
+import { ref, computed, onBeforeUnmount } from "vue";
+import Icon from "@/components/common/Icon.vue";
 
 const props = defineProps({
   isPlaying: { type: Boolean, default: false },
@@ -14,19 +11,25 @@ const props = defineProps({
   isSingRecording: { type: Boolean, default: false },
   isSingBusy: { type: Boolean, default: false },
   singButtonLabel: { type: String, default: "学唱" },
+  waveLevels: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits([
-  "toggle-play",
-  "cycle-rate",
-  "open-lyrics-settings",
-  "drag-start",
-  "drag-move",
-  "drag-end",
-  "toggle-sing",
-]);
+const emit = defineEmits(["toggle-play", "cycle-rate", "open-lyrics-settings", "open-volume-settings", "drag-start", "drag-move", "drag-end", "toggle-sing"]);
 
 const progressBarRef = ref(null);
+
+const WAVE_BAR_COUNT = 12;
+const DEFAULT_LEVEL = 0.25;
+
+const displayWaveLevels = computed(() => {
+  const levels = props.waveLevels || [];
+  const last = levels.length <= WAVE_BAR_COUNT ? [...levels] : levels.slice(-WAVE_BAR_COUNT);
+  const result = [...last];
+  while (result.length < WAVE_BAR_COUNT) {
+    result.push(DEFAULT_LEVEL);
+  }
+  return result;
+});
 
 function formatTime(sec) {
   if (!sec || sec < 0) return "0:00";
@@ -90,8 +93,9 @@ onBeforeUnmount(() => {
       <div
         ref="progressBarRef"
         class="progress-bar"
-        @mousedown="onMouseDown"
-        @touchstart.prevent="onTouchStart"
+        :class="{ 'is-no-drag': isSingRecording }"
+        @mousedown="(e) => !isSingRecording && onMouseDown(e)"
+        @touchstart.prevent="(e) => !isSingRecording && onTouchStart(e)"
       >
         <div class="progress-track">
           <div class="progress-fill" :style="{ width: progressPercent + '%' }" />
@@ -104,26 +108,37 @@ onBeforeUnmount(() => {
     <div class="btn-row">
       <div class="btn-side btn-side-left">
         <button class="btn-chip btn-rate" @click="emit('cycle-rate')">
-          <span class="chip-label">倍速</span>
-          <span class="chip-value">{{ playbackRate === 1 ? "1.0x" : playbackRate + "x" }}</span>
+          <!-- <img :src="rateIcon" alt="" class="icon-rate" /> -->
+          <span class="rate-badge">{{ playbackRate === 1 ? "1.0x" : playbackRate + "x" }}</span>
+          <span>倍速</span>
+          <!-- <span class="rate-badge">{{ playbackRate === 1 ? "1.0x" : playbackRate + "x" }}</span> -->
+        </button>
+        <button class="btn-chip btn-volume" @click="emit('open-volume-settings')">
+          <Icon name="player-volume" size="18px" class="icon-volume" />
+          <span>音量</span>
         </button>
       </div>
 
-      <button
-        class="btn-play"
-        :class="{ 'is-playing': isPlaying }"
-        @click="emit('toggle-play')"
-        :aria-label="isPlaying ? '暂停' : '播放'"
-      >
-        <img :src="isPlaying ? pauseIcon : playIcon" alt="" class="icon-play" />
-      </button>
+      <div class="center-slot">
+        <button
+          v-if="!isSingRecording"
+          class="btn-play"
+          :class="{ 'is-playing': isPlaying }"
+          @click="emit('toggle-play')"
+          :aria-label="isPlaying ? '暂停' : '播放'"
+        >
+          <Icon :name="isPlaying ? 'player-pause' : 'player-play'" size="24px" class="icon-play" />
+        </button>
+        <div v-else class="wave-center" aria-hidden="true">
+          <span v-for="(level, idx) in displayWaveLevels" :key="idx" class="wave-center-bar" :style="{ transform: `scaleY(${Math.max(0.2, level)})` }" />
+        </div>
+      </div>
 
       <div class="btn-side btn-side-right">
         <button class="btn-chip btn-lyrics" @click="emit('open-lyrics-settings')">
-          <img :src="lyricsIcon" alt="" class="icon-lyrics" />
+          <Icon name="player-lyrics" size="18px" class="icon-lyrics" />
           <span>歌词</span>
         </button>
-
         <button
           class="btn-chip btn-sing"
           :class="{ 'is-recording': isSingRecording, 'is-busy': isSingBusy }"
@@ -131,7 +146,7 @@ onBeforeUnmount(() => {
           :title="isSingBusy ? '处理中' : isSingRecording ? '结束录制并合成' : '开始学唱'"
           @click="emit('toggle-sing')"
         >
-          <img :src="micIcon" alt="" class="icon-sing" />
+          <Icon name="player-mic" size="18px" class="icon-sing" />
           <span>{{ singButtonLabel }}</span>
         </button>
       </div>
@@ -190,6 +205,11 @@ button {
   align-items: center;
   cursor: pointer;
   touch-action: none;
+
+  &.is-no-drag {
+    cursor: default;
+    touch-action: manipulation;
+  }
 }
 
 .progress-track {
@@ -236,11 +256,45 @@ button {
 
 .btn-side-left {
   justify-self: start;
+  gap: 10px;
 }
 
 .btn-side-right {
   justify-self: end;
   gap: 10px;
+}
+
+.center-slot {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wave-center {
+  width: 80px;
+  height: 56px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(125, 211, 252, 0.5) 0%, rgba(56, 189, 248, 0.35) 56%, rgba(14, 165, 233, 0.4) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.wave-center-bar {
+  width: 2.5px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  transform-origin: center;
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.95) 0%, rgba(14, 165, 233, 0.9) 100%);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.24);
+  transition: transform 0.08s linear;
 }
 
 .btn-play {
@@ -256,7 +310,9 @@ button {
   box-shadow:
     0 6px 18px rgba(14, 165, 233, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 
   &:active {
     transform: scale(0.92);
@@ -271,9 +327,7 @@ button {
   }
 
   .icon-play {
-    width: 24px;
-    height: 24px;
-    filter: brightness(0) invert(1);
+    color: #fff;
   }
 }
 
@@ -294,8 +348,11 @@ button {
   border: 1.5px solid rgba(56, 189, 248, 0.3);
   border-radius: 14px;
   cursor: pointer;
-  color: #0284c7;
-  transition: background 0.2s, transform 0.15s, border-color 0.2s;
+  color: #0369a1;
+  transition:
+    background 0.2s,
+    transform 0.15s,
+    border-color 0.2s;
   font-family: inherit;
 
   &:active {
@@ -310,18 +367,31 @@ button {
 }
 
 .btn-rate {
-  .chip-label {
-    font-size: 0.62rem;
+  span {
+    font-size: 0.65rem;
     font-weight: 600;
-    line-height: 1;
-    opacity: 0.82;
   }
 
-  .chip-value {
-    font-size: 0.78rem;
+  .rate-badge {
+    font-size: 0.7rem;
     font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: 0.02em;
+    line-height: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    text-align: center;
+    color: #0369a1;
+  }
+}
+
+.btn-volume {
+  .icon-volume {
+    width: 18px;
+    height: 18px;
+  }
+
+  span {
+    font-size: 0.65rem;
+    font-weight: 600;
   }
 }
 
@@ -335,12 +405,16 @@ button {
     font-size: 0.65rem;
     font-weight: 600;
   }
+  color: #0369a1;
 }
 
 .btn-sing {
   background: rgba(186, 230, 253, 0.55);
   border-color: rgba(14, 165, 233, 0.28);
-  transition: opacity 0.2s, background 0.2s, border-color 0.2s;
+  transition:
+    opacity 0.2s,
+    background 0.2s,
+    border-color 0.2s;
 
   .icon-sing {
     width: 18px;
@@ -361,6 +435,7 @@ button {
     .icon-sing {
       opacity: 1;
       animation: sing-dot 1.2s ease-in-out infinite;
+      // filter: brightness(0) saturate(100%) invert(18%) sepia(90%) saturate(4000%) hue-rotate(350deg) brightness(95%) contrast(101%);
     }
   }
 
@@ -375,6 +450,7 @@ button {
     gap: 10px;
   }
 
+  .btn-side-left,
   .btn-side-right {
     gap: 8px;
   }
@@ -388,6 +464,17 @@ button {
   .btn-lyrics,
   .btn-sing {
     min-width: 46px;
+  }
+
+  .center-slot,
+  .wave-center {
+    width: 80px;
+    height: 48px;
+  }
+
+  .wave-center-bar {
+    width: 2.5px;
+    height: 20px;
   }
 }
 

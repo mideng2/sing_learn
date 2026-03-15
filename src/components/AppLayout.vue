@@ -1,7 +1,6 @@
 <script setup lang="js">
 import { RouterLink } from "vue-router";
-import navPlaylistSvg from "@/assets/icons/nav-playlist.svg?raw";
-import navRecordingsSvg from "@/assets/icons/nav-recordings.svg?raw";
+import Icon from "@/components/common/Icon.vue";
 </script>
 
 <template>
@@ -12,13 +11,13 @@ import navRecordingsSvg from "@/assets/icons/nav-recordings.svg?raw";
     <nav class="nav">
       <RouterLink to="/" class="nav-item" active-class="active">
         <span class="nav-icon-wrap">
-          <span class="nav-icon" v-html="navPlaylistSvg" />
+          <Icon name="nav-playlist" size="22px" class="nav-icon" />
         </span>
         <span class="nav-text">播放列表</span>
       </RouterLink>
       <RouterLink to="/my-recordings" class="nav-item" active-class="active">
         <span class="nav-icon-wrap">
-          <span class="nav-icon" v-html="navRecordingsSvg" />
+          <Icon name="nav-recordings" size="22px" class="nav-icon" />
         </span>
         <span class="nav-text">我的演唱</span>
       </RouterLink>
@@ -117,17 +116,9 @@ import navRecordingsSvg from "@/assets/icons/nav-recordings.svg?raw";
 }
 
 .nav-icon {
-  width: 22px;
-  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-
-  :deep(svg) {
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
 }
 
 .nav-text {

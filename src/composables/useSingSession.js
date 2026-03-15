@@ -29,6 +29,10 @@ export function useSingSession() {
   const singCurrentTime = ref(0);
   const reviewRecord = ref(null);
   const audioEngineType = ref("");
+  const mixSettings = ref({
+    instrumentVolume: 0.72,
+    voiceVolume: 1,
+  });
 
   const isRecording = computed(() => status.value === "recording");
   const isBusy = computed(() => status.value === "preparing" || status.value === "mixing");
@@ -76,6 +80,24 @@ export function useSingSession() {
     pollTimer = null;
   }
 
+  function normalizeVolume(value, fallback) {
+    const next = Number(value);
+    if (Number.isNaN(next)) return fallback;
+    return Math.max(0, Math.min(1.5, next));
+  }
+
+  async function updateMixSettings(next) {
+    mixSettings.value = {
+      instrumentVolume: normalizeVolume(next?.instrumentVolume, mixSettings.value.instrumentVolume),
+      voiceVolume: normalizeVolume(next?.voiceVolume, mixSettings.value.voiceVolume),
+    };
+    try {
+      await audioEngine.updateMixSettings?.(mixSettings.value);
+    } catch {
+      // 会话未开始时无需阻塞 UI
+    }
+  }
+
   async function clearReviewRecord() {
     if (!reviewRecord.value) return;
     try {
@@ -102,7 +124,7 @@ export function useSingSession() {
     console.log("[SingSession] startSing →", { songId: song?.id, instrument: song?.instrument });
 
     try {
-      await audioEngine.startSession({ instrumentSrc: song.instrument });
+      await audioEngine.startSession({ instrumentSrc: song.instrument, mixSettings: mixSettings.value });
       audioEngineType.value = audioEngine.engineType;
       console.log("[SingSession] recording started, engine:", audioEngine.engineType);
       status.value = "recording";
@@ -122,6 +144,7 @@ export function useSingSession() {
 
     try {
       const rawSession = await audioEngine.stopSession();
+      rawSession.mixSettings = mixSettings.value;
       console.log("[SingSession] rawSession:", rawSession);
 
       const mixResult = await audioEngine.mixSession({ rawSession, song });
@@ -187,12 +210,14 @@ export function useSingSession() {
     waveLevels,
     singCurrentTime,
     reviewRecord,
+    mixSettings,
     isRecording,
     isBusy,
     isReviewing,
     singButtonLabel,
     audioEngineType,
     toggleSing,
+    updateMixSettings,
     saveReviewRecord,
     discardReviewRecord,
     dispose,

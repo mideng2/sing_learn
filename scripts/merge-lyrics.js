@@ -24,7 +24,10 @@ const TIME_REGEX = /^\[(\d{2}:\d{2}\.\d{3})\]\s*(.*)$/;
 
 function parseLyrics(text) {
   if (!text || typeof text !== "string") return new Map();
-  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   const result = new Map();
   for (const line of lines) {
     const match = line.match(TIME_REGEX);
@@ -75,10 +78,8 @@ async function addKanaAndRomaji(merged, kuroshiro) {
         rmParts.push("");
       } else {
         try {
-          jmParts.push(await kuroshiro.convert(trimmed, { to: "hiragana" }));
-          rmParts.push(
-            await kuroshiro.convert(trimmed, { to: "romaji", mode: "spaced", romajiSystem: "hepburn" })
-          );
+          jmParts.push(await kuroshiro.convert(trimmed, { to: "hiragana", mode: "spaced" }));
+          rmParts.push(await kuroshiro.convert(trimmed, { to: "romaji", mode: "spaced", romajiSystem: "hepburn" }));
         } catch {
           jmParts.push(trimmed);
           rmParts.push(trimmed);
@@ -105,14 +106,7 @@ const outputDir = process.argv[3] || dirname(inputFile);
     const inputUrl = pathToFileURL(inputPath).href;
 
     const module = await import(inputUrl);
-    const entries = Object.entries(module).filter(
-      ([key, val]) =>
-        key !== "default" &&
-        val &&
-        typeof val === "object" &&
-        "jp" in val &&
-        "zh" in val
-    );
+    const entries = Object.entries(module).filter(([key, val]) => key !== "default" && val && typeof val === "object" && "jp" in val && "zh" in val);
 
     if (entries.length === 0) {
       console.error("未找到有效的歌词常量（需包含 jp、zh 字段）");

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ios": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "mp3-to-m4a": "python3 scripts/mp3_to_m4a.py",

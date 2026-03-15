@@ -51,6 +51,8 @@ function durationToBitrate(durationMs, sizeBytes) {
 
 export function createWebAudioEngine() {
   const engineType = "web-fallback";
+  let instrumentVolume = 0.72;
+  let voiceVolume = 1;
   let mediaRecorder = null;
   let mediaStream = null;
   let chunks = [];
@@ -60,16 +62,46 @@ export function createWebAudioEngine() {
 
   let audioContext = null;
   let analyserNode = null;
+  let monitorGainNode = null;
   let sourceNode = null;
   let rafId = null;
   let liveLevel = 0;
 
+  function resolveMixDurationSeconds(instrumentDuration, voiceDuration) {
+    if (voiceDuration > 0 && instrumentDuration > 0) {
+      return Math.min(voiceDuration, instrumentDuration);
+    }
+    if (voiceDuration > 0) return voiceDuration;
+    if (instrumentDuration > 0) return instrumentDuration;
+    return 0;
+  }
+
+  function clampVolume(value, fallback) {
+    const next = Number(value);
+    if (Number.isNaN(next)) return fallback;
+    return Math.max(0, Math.min(1.5, next));
+  }
+
+  function applyLiveMixSettings() {
+    if (monitorGainNode) {
+      monitorGainNode.gain.value = voiceVolume;
+    }
+    if (instrumentHowl) {
+      instrumentHowl.volume(instrumentVolume);
+    }
+  }
+
   async function setupMetering(stream) {
     audioContext = new AudioContext();
+    await audioContext.resume().catch(() => {});
     analyserNode = audioContext.createAnalyser();
     analyserNode.fftSize = 1024;
+    monitorGainNode = audioContext.createGain();
+    monitorGainNode.gain.value = voiceVolume;
     sourceNode = audioContext.createMediaStreamSource(stream);
     sourceNode.connect(analyserNode);
+    sourceNode.connect(monitorGainNode);
+    monitorGainNode.connect(audioContext.destination);
 
     const timeData = new Float32Array(analyserNode.fftSize);
     const update = () => {
@@ -97,6 +129,10 @@ export function createWebAudioEngine() {
       analyserNode.disconnect();
       analyserNode = null;
     }
+    if (monitorGainNode) {
+      monitorGainNode.disconnect();
+      monitorGainNode = null;
+    }
     if (audioContext) {
       audioContext.close();
       audioContext = null;
@@ -116,7 +152,15 @@ export function createWebAudioEngine() {
       throw new Error("缺少伴奏音频地址");
     }
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    updateMixSettings(options.mixSettings);
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
     mediaRecorder = new MediaRecorder(mediaStream);
     chunks = [];
     mediaRecorder.ondataavailable = (event) => {
@@ -136,8 +180,16 @@ export function createWebAudioEngine() {
     });
 
     mediaRecorder.start(200);
+    applyLiveMixSettings();
     instrumentHowl.play();
     recordStartTs = Date.now();
+  }
+
+  function updateMixSettings(settings) {
+    if (!settings || typeof settings !== "object") return;
+    instrumentVolume = clampVolume(settings.instrumentVolume, instrumentVolume);
+    voiceVolume = clampVolume(settings.voiceVolume, voiceVolume);
+    applyLiveMixSettings();
   }
 
   function getLiveMetrics() {
@@ -190,36 +242,37 @@ export function createWebAudioEngine() {
     ]);
     await tempContext.close();
 
-    const maxDuration = Math.max(instrumentBuffer.duration, voiceBuffer.duration);
+    const mixDuration = resolveMixDurationSeconds(instrumentBuffer.duration, voiceBuffer.duration);
     const sampleRate = 44100;
-    const length = Math.ceil(maxDuration * sampleRate);
+    const length = Math.max(1, Math.ceil(mixDuration * sampleRate));
     const channels = 2;
     const offline = new OfflineAudioContext(channels, length, sampleRate);
 
     const instrumentSource = offline.createBufferSource();
     instrumentSource.buffer = instrumentBuffer;
     const instrumentGain = offline.createGain();
-    instrumentGain.gain.value = 0.95;
+    instrumentGain.gain.value = instrumentVolume;
     instrumentSource.connect(instrumentGain).connect(offline.destination);
-    instrumentSource.start(0);
+    instrumentSource.start(0, 0, mixDuration || instrumentBuffer.duration);
 
     const voiceSource = offline.createBufferSource();
     voiceSource.buffer = voiceBuffer;
     const voiceGain = offline.createGain();
-    voiceGain.gain.value = 1.2;
+    voiceGain.gain.value = voiceVolume;
     voiceSource.connect(voiceGain).connect(offline.destination);
-    voiceSource.start(0);
+    voiceSource.start(0, 0, mixDuration || voiceBuffer.duration);
 
     const mixedBuffer = await offline.startRendering();
     const mixBlob = encodeWavFromAudioBuffer(mixedBuffer);
+    const durationMs = Math.round(mixDuration * 1000);
 
     return {
       mixBlob,
       voiceBlob: rawSession.voiceBlob,
-      durationMs: rawSession.durationMs,
+      durationMs,
       sizeBytes: mixBlob.size,
       format: "wav",
-      bitrateKbps: durationToBitrate(rawSession.durationMs, mixBlob.size),
+      bitrateKbps: durationToBitrate(durationMs, mixBlob.size),
       engineType,
     };
   }
@@ -269,6 +322,7 @@ export function createWebAudioEngine() {
     startSession,
     stopSession,
     getLiveMetrics,
+    updateMixSettings,
     mixSession,
     saveMix,
     discardResult,

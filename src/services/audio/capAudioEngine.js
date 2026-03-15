@@ -5,6 +5,25 @@ const SingingAudio = registerPlugin("SingingAudio");
 export function createCapAudioEngine() {
   const engineType = "capacitor-native";
   let sessionInstrumentSrc = "";
+  let mixSettings = {
+    instrumentVolume: 0.72,
+    voiceVolume: 1,
+  };
+
+  function normalizeVolume(value, fallback) {
+    const next = Number(value);
+    if (Number.isNaN(next)) return fallback;
+    return Math.max(0, Math.min(1.5, next));
+  }
+
+  function resolveMixSettings(next) {
+    if (!next || typeof next !== "object") return mixSettings;
+    mixSettings = {
+      instrumentVolume: normalizeVolume(next.instrumentVolume, mixSettings.instrumentVolume),
+      voiceVolume: normalizeVolume(next.voiceVolume, mixSettings.voiceVolume),
+    };
+    return mixSettings;
+  }
 
   async function startSession(options) {
     const instrumentSrc = options.instrumentSrc || "";
@@ -12,9 +31,10 @@ export function createCapAudioEngine() {
       throw new Error("缺少伴奏音频地址");
     }
     sessionInstrumentSrc = instrumentSrc;
+    const nextMixSettings = resolveMixSettings(options.mixSettings);
     console.log("[CapAudio] startSession →", { instrumentSrc });
     try {
-      await SingingAudio.startRecording({ instrumentSrc });
+      await SingingAudio.startRecording({ instrumentSrc, ...nextMixSettings });
       console.log("[CapAudio] startSession ✓");
     } catch (err) {
       console.error("[CapAudio] startSession ✗", err);
@@ -52,10 +72,12 @@ export function createCapAudioEngine() {
   }
 
   async function mixSession({ rawSession, song }) {
+    const nextMixSettings = resolveMixSettings(rawSession.mixSettings);
     const params = {
       instrumentSrc: rawSession.instrumentSrc || song.instrument,
       voiceFileUri: rawSession.voiceFileUri,
       songId: song.id,
+      ...nextMixSettings,
     };
     console.log("[CapAudio] mixSession →", params);
     try {
@@ -75,6 +97,15 @@ export function createCapAudioEngine() {
     } catch (err) {
       console.error("[CapAudio] mixSession ✗", err);
       throw err;
+    }
+  }
+
+  async function updateMixSettings(next) {
+    const resolved = resolveMixSettings(next);
+    try {
+      await SingingAudio.updateMixSettings(resolved);
+    } catch {
+      // 会话未开始时无需阻塞
     }
   }
 
@@ -127,6 +158,7 @@ export function createCapAudioEngine() {
     startSession,
     stopSession,
     getLiveMetrics,
+    updateMixSettings,
     mixSession,
     saveMix,
     discardResult,
