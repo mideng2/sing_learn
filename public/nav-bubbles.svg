@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="bubbleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e0f4ff;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#b8e8ff;stop-opacity:0.7" />
+    </linearGradient>
+    <circle id="bubble" r="8" fill="url(#bubbleGrad)" opacity="0.6"/>
+  </defs>
+  <use href="#bubble" x="20" y="20"/>
+  <use href="#bubble" x="80" y="45"/>
+  <use href="#bubble" x="140" y="15"/>
+  <use href="#bubble" x="200" y="50"/>
+  <use href="#bubble" x="260" y="25"/>
+  <use href="#bubble" x="320" y="40"/>
+</svg>

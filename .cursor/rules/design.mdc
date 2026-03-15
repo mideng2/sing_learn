@@ -1,0 +1,16 @@
+---
+# description: Figma 设计稿到代码的转化协议
+description: 根据DESIGN.md生成less变量
+globs: src/assets/styles/variable.less
+alwaysApply: false
+---
+
+# Figma 转化协议
+
+- **语义化命名**: 变量名应体现用途而非数值。
+  - _正例_: `@brand-primary`, `@text-secondary`, `@radius-main`。
+  - _反例_: `@dark-blue`, `@font-14`。
+- **设计映射**:
+  - 将 Figma 中的十六进制色值映射为 `@` 变量。
+  - 字体样式（Size, Weight, Line-height）封装为 Less Mixins。
+- **初始化流程**: 当提供设计稿截图或描述时，首先更新 `variable.less`，再编写组件。

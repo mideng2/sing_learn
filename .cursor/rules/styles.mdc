@@ -1,0 +1,15 @@
+---
+description: Less 编写与样式约束（禁止 Tailwind）
+globs: **/*.{less,vue}
+alwaysApply: false
+---
+
+# 样式规范 (Less)
+
+- **语言限制**: 仅使用 Less。**严格禁止使用 Tailwind CSS。**
+- **作用域**: Vue 组件必须使用 `<style lang="less" scoped>`。
+- **变量优先**:
+  <!-- - 严禁硬编码（如 `#FFFFFF`, `16px`）。 -->
+  - 优先从 `@/assets/css/variables.less` 查找并使用变量。
+- **结构要求**: 利用 Less 嵌套特性，保持选择器层级与 HTML 结构一致，提高可读性。
+- **svg**:生成的svg全部作为文件引用，存放在@/assets/icons下

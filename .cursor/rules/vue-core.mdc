@@ -1,0 +1,19 @@
+---
+description: 核心技术栈与 Vue 3 业务逻辑规范
+globs: src/views/**/*.vue, src/**/*.{vue,js}
+alwaysApply: true
+---
+
+# Vue 3 & JavaScript 规范
+
+- **语法标准**: 必须使用 `<script setup lang="js">`。
+- **views 命名**: 小写、尽量单词、与 route 一致，如 `playlist.vue`、`player.vue`、`my-recordings.vue`
+- **状态管理**:
+  - 使用 Pinia (Setup Store 模式)。
+  - 从 store 解构数据必须使用 `storeToRefs`。
+- **逻辑抽离**: 复杂的业务逻辑（超过 80 行）必须提取到 `src/composables/`。
+- **拆分组件**:复杂的组件需要进行拆分，页面不要超过300行，尽量保持在200行以内
+- **类型安全**:
+  - 严禁使用 `any`。
+  - 为 Props、Emits、API 返回值定义明确的 `interface`。
+- **精简输出**: 仅修改差异点，禁止无意义的全量重写。

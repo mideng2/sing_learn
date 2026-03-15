@@ -1,0 +1,14 @@
+---
+description: 目录结构与组件复用逻辑
+globs: src/components/**
+alwaysApply: false
+---
+
+# 架构规范
+
+- **公共组件**: 所有全局通用组件必须存放在 `src/components/common/`。
+- **引入路径**: 统一使用 `@/components/common/...` 别名。
+- **命名规范**:
+  - 组件文件使用大驼峰 (PascalCase)，如 `GlobalModal.vue`。
+  - 内部变量与方法使用小驼峰 (camelCase)。
+- **复用检查**: 在生成新 UI 逻辑前，优先检索 `common/` 目录下是否已有可复用组件。
