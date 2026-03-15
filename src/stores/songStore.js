@@ -1,9 +1,9 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-const s_p = "/src/assets/songs/";
-const ins_p = "/src/assets/instruments/";
-const lyr_p = "/src/assets/lyrics/";
+const s_p = "/songs/";
+const ins_p = "/instruments/";
+const lyr_p = "/lyrics/";
 
 export const useSongStore = defineStore("song", () => {
   const songs = ref([

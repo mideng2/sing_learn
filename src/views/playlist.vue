@@ -72,7 +72,7 @@ function formatDuration(seconds) {
   min-height: 100%;
   min-height: 100dvh; /* 移动端占满全屏 */
   box-sizing: border-box;
-  padding: 24px 20px calc(32px + env(safe-area-inset-bottom, 0));
+  padding: calc(24px + env(safe-area-inset-top, 0)) calc(20px + env(safe-area-inset-right, 0)) calc(32px + env(safe-area-inset-bottom, 0)) calc(20px + env(safe-area-inset-left, 0));
   background: linear-gradient(180deg, #e0f4ff 0%, #b8e8ff 30%, #7dd3fc 70%, #38bdf8 100%);
   font-family: "Nunito", "PingFang SC", sans-serif;
 }
@@ -83,8 +83,8 @@ function formatDuration(seconds) {
   align-items: center;
   justify-content: center;
   gap: 0;
-  margin: -24px -20px 14px;
-  padding: 24px 20px;
+  margin: calc(-24px - env(safe-area-inset-top, 0)) calc(-20px - env(safe-area-inset-right, 0)) 14px calc(-20px - env(safe-area-inset-left, 0));
+  padding: calc(24px + env(safe-area-inset-top, 0)) calc(20px + env(safe-area-inset-right, 0)) 24px calc(20px + env(safe-area-inset-left, 0));
   background:
     linear-gradient(180deg, rgba(224, 244, 255, 0.72) 0%, rgba(184, 232, 255, 0.58) 45%, rgba(125, 211, 252, 0.34) 100%),
     radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0) 65%);
@@ -293,9 +293,14 @@ function formatDuration(seconds) {
   text-decoration: none;
   color: inherit;
   transition: background 0.2s ease;
+  -webkit-tap-highlight-color: transparent; /* 去掉点击时的黑/灰遮罩 */
 
   &:hover {
     background: linear-gradient(135deg, rgba(255, 255, 255, 1) 0%, rgba(186, 230, 253, 0.95) 100%);
+  }
+
+  &:active {
+    background: linear-gradient(135deg, rgba(186, 230, 253, 0.95) 0%, rgba(224, 242, 254, 0.92) 100%);
   }
 }
 
@@ -346,7 +351,7 @@ function formatDuration(seconds) {
 
 .ocean-floor-wrap {
   position: fixed;
-  bottom: 76px;
+  bottom: calc(76px + env(safe-area-inset-bottom, 0));
   left: 20px;
   right: 0;
   margin: 0 -20px;

@@ -11,6 +11,9 @@ const props = defineProps({
   duration: { type: Number, default: 0 },
   progressPercent: { type: Number, default: 0 },
   playbackRate: { type: Number, default: 1 },
+  isSingRecording: { type: Boolean, default: false },
+  isSingBusy: { type: Boolean, default: false },
+  singButtonLabel: { type: String, default: "学唱" },
 });
 
 const emit = defineEmits([
@@ -20,6 +23,7 @@ const emit = defineEmits([
   "drag-start",
   "drag-move",
   "drag-end",
+  "toggle-sing",
 ]);
 
 const progressBarRef = ref(null);
@@ -120,9 +124,15 @@ onBeforeUnmount(() => {
           <span>歌词</span>
         </button>
 
-        <button class="btn-chip btn-sing" disabled title="学唱（即将上线）">
+        <button
+          class="btn-chip btn-sing"
+          :class="{ 'is-recording': isSingRecording, 'is-busy': isSingBusy }"
+          :disabled="isSingBusy"
+          :title="isSingBusy ? '处理中' : isSingRecording ? '结束录制并合成' : '开始学唱'"
+          @click="emit('toggle-sing')"
+        >
           <img :src="micIcon" alt="" class="icon-sing" />
-          <span>学唱</span>
+          <span>{{ singButtonLabel }}</span>
         </button>
       </div>
     </div>
@@ -133,6 +143,7 @@ onBeforeUnmount(() => {
 .controls {
   flex-shrink: 0;
   padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0));
+  touch-action: manipulation; /* 整块控制区避免双击缩放 */
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 30%),
     linear-gradient(160deg, rgba(255, 255, 255, 0.92) 0%, rgba(204, 238, 255, 0.95) 100%);
@@ -146,6 +157,7 @@ button {
   appearance: none;
   outline: none;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; /* 避免双击触发页面缩放 */
 }
 
 .progress-row {
@@ -326,21 +338,35 @@ button {
 }
 
 .btn-sing {
-  cursor: not-allowed;
-  opacity: 0.58;
-  background: rgba(56, 189, 248, 0.09);
-  border-color: rgba(56, 189, 248, 0.22);
-  transition: opacity 0.2s, background 0.2s;
+  background: rgba(186, 230, 253, 0.55);
+  border-color: rgba(14, 165, 233, 0.28);
+  transition: opacity 0.2s, background 0.2s, border-color 0.2s;
 
   .icon-sing {
     width: 18px;
     height: 18px;
-    opacity: 0.7;
+    opacity: 0.88;
   }
 
   span {
     font-size: 0.65rem;
     font-weight: 600;
+  }
+
+  &.is-recording {
+    background: linear-gradient(160deg, rgba(252, 165, 165, 0.34) 0%, rgba(248, 113, 113, 0.2) 100%);
+    border-color: rgba(239, 68, 68, 0.45);
+    color: #b91c1c;
+
+    .icon-sing {
+      opacity: 1;
+      animation: sing-dot 1.2s ease-in-out infinite;
+    }
+  }
+
+  &.is-busy {
+    cursor: wait;
+    opacity: 0.65;
   }
 }
 
@@ -376,6 +402,16 @@ button {
     box-shadow:
       0 8px 20px rgba(14, 165, 233, 0.38),
       0 0 0 6px rgba(56, 189, 248, 0.18);
+  }
+}
+
+@keyframes sing-dot {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
   }
 }
 </style>

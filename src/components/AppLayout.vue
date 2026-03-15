@@ -32,8 +32,13 @@ import navRecordingsSvg from "@/assets/icons/nav-recordings.svg?raw";
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0);
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
   padding-bottom: calc(76px + env(safe-area-inset-bottom, 0));
   font-family: "Nunito", "PingFang SC", sans-serif;
+  /* 与页面一致的渐变，刘海区域不再露出白底 */
+  background: linear-gradient(180deg, #e0f4ff 0%, #b8e8ff 30%, #7dd3fc 70%, #38bdf8 100%);
 }
 
 .main {
@@ -48,6 +53,8 @@ import navRecordingsSvg from "@/assets/icons/nav-recordings.svg?raw";
   right: 0;
   height: calc(76px + env(safe-area-inset-bottom, 0));
   padding: 0 24px calc(env(safe-area-inset-bottom, 0));
+  padding-left: calc(24px + env(safe-area-inset-left, 0));
+  padding-right: calc(24px + env(safe-area-inset-right, 0));
   display: flex;
   align-items: center;
   justify-content: space-around;
