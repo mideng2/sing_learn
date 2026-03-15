@@ -53,8 +53,6 @@ export function createWebAudioEngine() {
   const engineType = "web-fallback";
   let instrumentVolume = 0.72;
   let voiceVolume = 1;
-  let mediaRecorder = null;
-  let mediaStream = null;
   let chunks = [];
   let recordStartTs = 0;
   let instrumentSrc = "";
@@ -64,8 +62,13 @@ export function createWebAudioEngine() {
   let analyserNode = null;
   let monitorGainNode = null;
   let sourceNode = null;
+  let scriptProcessorNode = null;
+  let mediaStream = null;
   let rafId = null;
   let liveLevel = 0;
+
+  let recordedBuffers = [];
+  let recordingSampleRate = 44100;
 
   function resolveMixDurationSeconds(instrumentDuration, voiceDuration) {
     if (voiceDuration > 0 && instrumentDuration > 0) {
@@ -87,21 +90,40 @@ export function createWebAudioEngine() {
       monitorGainNode.gain.value = voiceVolume;
     }
     if (instrumentHowl) {
-      instrumentHowl.volume(instrumentVolume);
+      instrumentHowl.volume(Math.min(1, instrumentVolume));
     }
   }
 
-  async function setupMetering(stream) {
-    audioContext = new AudioContext();
+  async function setupAudioPipeline(stream) {
+    audioContext = new AudioContext({
+      latencyHint: "interactive",
+      sampleRate: 44100,
+    });
     await audioContext.resume().catch(() => {});
+    recordingSampleRate = audioContext.sampleRate;
+
     analyserNode = audioContext.createAnalyser();
-    analyserNode.fftSize = 1024;
+    analyserNode.fftSize = 512;
+
     monitorGainNode = audioContext.createGain();
     monitorGainNode.gain.value = voiceVolume;
+
     sourceNode = audioContext.createMediaStreamSource(stream);
+
     sourceNode.connect(analyserNode);
     sourceNode.connect(monitorGainNode);
     monitorGainNode.connect(audioContext.destination);
+
+    const bufferSize = 2048;
+    scriptProcessorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+    recordedBuffers = [];
+
+    scriptProcessorNode.onaudioprocess = (e) => {
+      const inputData = e.inputBuffer.getChannelData(0);
+      recordedBuffers.push(new Float32Array(inputData));
+    };
+    sourceNode.connect(scriptProcessorNode);
+    scriptProcessorNode.connect(audioContext.destination);
 
     const timeData = new Float32Array(analyserNode.fftSize);
     const update = () => {
@@ -117,10 +139,33 @@ export function createWebAudioEngine() {
     update();
   }
 
-  function teardownMetering() {
+  function buildVoiceAudioBuffer() {
+    if (!recordedBuffers.length) return null;
+    const totalLength = recordedBuffers.reduce((sum, buf) => sum + buf.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const buf of recordedBuffers) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    }
+    const audioBuffer = new AudioBuffer({
+      numberOfChannels: 1,
+      length: totalLength,
+      sampleRate: recordingSampleRate,
+    });
+    audioBuffer.copyToChannel(merged, 0);
+    return audioBuffer;
+  }
+
+  function teardownPipeline() {
     cancelAnimationFrame(rafId);
     rafId = null;
     liveLevel = 0;
+    if (scriptProcessorNode) {
+      scriptProcessorNode.onaudioprocess = null;
+      scriptProcessorNode.disconnect();
+      scriptProcessorNode = null;
+    }
     if (sourceNode) {
       sourceNode.disconnect();
       sourceNode = null;
@@ -159,17 +204,15 @@ export function createWebAudioEngine() {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
+        sampleRate: 44100,
+        channelCount: 1,
       },
     });
-    mediaRecorder = new MediaRecorder(mediaStream);
-    chunks = [];
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        chunks.push(event.data);
-      }
-    };
 
-    await setupMetering(mediaStream);
+    chunks = [];
+    recordedBuffers = [];
+
+    await setupAudioPipeline(mediaStream);
 
     instrumentHowl = new Howl({
       src: [instrumentSrc],
@@ -179,7 +222,6 @@ export function createWebAudioEngine() {
       },
     });
 
-    mediaRecorder.start(200);
     applyLiveMixSettings();
     instrumentHowl.play();
     recordStartTs = Date.now();
@@ -198,52 +240,48 @@ export function createWebAudioEngine() {
   }
 
   async function stopSession() {
-    if (!mediaRecorder) {
+    if (!mediaStream) {
       throw new Error("当前没有正在进行的录音会话");
     }
 
-    const voiceBlob = await new Promise((resolve) => {
-      mediaRecorder.onstop = () => {
-        const mimeType = mediaRecorder.mimeType || "audio/webm";
-        resolve(new Blob(chunks, { type: mimeType }));
-      };
-      mediaRecorder.stop();
-    });
+    const voiceAudioBuffer = buildVoiceAudioBuffer();
 
     const durationMs = Math.max(0, Date.now() - recordStartTs);
 
     stopInstrument();
-    teardownMetering();
+    teardownPipeline();
     mediaStream.getTracks().forEach((track) => track.stop());
 
     const rawSession = {
       instrumentSrc,
-      voiceBlob,
+      voiceAudioBuffer,
       durationMs,
-      voiceMimeType: voiceBlob.type || "audio/webm",
     };
 
-    mediaRecorder = null;
     mediaStream = null;
     chunks = [];
+    recordedBuffers = [];
     return rawSession;
   }
 
   async function decodeAudioBuffer(ctx, input) {
+    if (input instanceof AudioBuffer) return input;
     const arrayBuffer = input instanceof Blob ? await input.arrayBuffer() : await (await fetch(input)).arrayBuffer();
     return ctx.decodeAudioData(arrayBuffer.slice(0));
   }
 
   async function mixSession({ rawSession }) {
-    const tempContext = new AudioContext();
+    const sampleRate = 44100;
+    const tempContext = new AudioContext({ sampleRate });
+
+    const voiceInput = rawSession.voiceAudioBuffer || rawSession.voiceBlob;
     const [instrumentBuffer, voiceBuffer] = await Promise.all([
       decodeAudioBuffer(tempContext, rawSession.instrumentSrc),
-      decodeAudioBuffer(tempContext, rawSession.voiceBlob),
+      decodeAudioBuffer(tempContext, voiceInput),
     ]);
     await tempContext.close();
 
     const mixDuration = resolveMixDurationSeconds(instrumentBuffer.duration, voiceBuffer.duration);
-    const sampleRate = 44100;
     const length = Math.max(1, Math.ceil(mixDuration * sampleRate));
     const channels = 2;
     const offline = new OfflineAudioContext(channels, length, sampleRate);
@@ -268,7 +306,7 @@ export function createWebAudioEngine() {
 
     return {
       mixBlob,
-      voiceBlob: rawSession.voiceBlob,
+      voiceBlob: encodeWavFromAudioBuffer(voiceBuffer),
       durationMs,
       sizeBytes: mixBlob.size,
       format: "wav",
@@ -306,15 +344,12 @@ export function createWebAudioEngine() {
   }
 
   async function destroy() {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop();
-    }
     if (mediaStream) {
       mediaStream.getTracks().forEach((track) => track.stop());
       mediaStream = null;
     }
     stopInstrument();
-    teardownMetering();
+    teardownPipeline();
   }
 
   return {

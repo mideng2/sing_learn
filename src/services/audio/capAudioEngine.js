@@ -102,8 +102,13 @@ export function createCapAudioEngine() {
 
   async function updateMixSettings(next) {
     const resolved = resolveMixSettings(next);
+    // 始终传完整数字，避免桥接丢字段；录制中调节需在原生端实时生效
+    const payload = {
+      instrumentVolume: Number(resolved.instrumentVolume),
+      voiceVolume: Number(resolved.voiceVolume),
+    };
     try {
-      await SingingAudio.updateMixSettings(resolved);
+      await SingingAudio.updateMixSettings(payload);
     } catch {
       // 会话未开始时无需阻塞
     }

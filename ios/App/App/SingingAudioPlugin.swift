@@ -16,16 +16,23 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "abortSession", returnType: CAPPluginReturnPromise)
     ]
 
+    // 录音（AVAudioRecorder）+ 伴奏播放（AVAudioPlayer）
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
+
+    // 耳返（独立 AVAudioEngine，仅用于麦克风监听回放）
     private var monitorEngine: AVAudioEngine?
     private var monitorMixer: AVAudioMixerNode?
+
     private var preferredBluetoothInput: AVAudioSessionPortDescription?
     private var instrumentVolume: Float = 0.72
     private var voiceVolume: Float = 1.0
     private var isRecording = false
     private var recordStartedAt: Date?
     private var currentVoiceUrl: URL?
+    private var routeChangeObserver: NSObjectProtocol?
+
+    // MARK: - Plugin Methods
 
     @objc func startRecording(_ call: CAPPluginCall) {
         let instrumentSrc = call.getString("instrumentSrc") ?? ""
@@ -38,13 +45,20 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             do {
                 self.applyMixSettings(from: call)
                 try self.configureAudioSessionForRecording()
+                self.beginRouteObservation()
+                self.logAudioRoute("after-configure-session")
+
+                // 录音：PCM Float32 无损录制
                 let voiceUrl = self.makeTempVoiceURL()
+                let activeSampleRate = AVAudioSession.sharedInstance().sampleRate
                 let settings: [String: Any] = [
-                    AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                    AVSampleRateKey: 44100,
+                    AVFormatIDKey: Int(kAudioFormatLinearPCM),
+                    AVSampleRateKey: activeSampleRate,
                     AVNumberOfChannelsKey: 1,
-                    AVEncoderBitRateKey: 96000,
-                    AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+                    AVLinearPCMBitDepthKey: 32,
+                    AVLinearPCMIsFloatKey: true,
+                    AVLinearPCMIsBigEndianKey: false,
+                    AVLinearPCMIsNonInterleaved: false
                 ]
 
                 self.recorder = try AVAudioRecorder(url: voiceUrl, settings: settings)
@@ -52,6 +66,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.recorder?.prepareToRecord()
                 let started = self.recorder?.record() ?? false
                 guard started else {
+                    self.logAudioRoute("record-start-failed")
                     call.reject("录音启动失败")
                     return
                 }
@@ -59,15 +74,24 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.currentVoiceUrl = voiceUrl
                 self.recordStartedAt = Date()
                 self.isRecording = true
-                try? self.startMicrophoneMonitoringIfPossible()
+                self.logAudioRoute("after-recorder-start")
 
-                // 伴奏播放：此骨架优先保证可编译与可调用。若伴奏 URL 不可被原生读取，不阻塞录音。
-                self.startInstrumentPlaybackIfPossible(instrumentSrc)
+                // 耳返
+                do {
+                    try self.startMicrophoneMonitor()
+                    self.logAudioRoute("after-monitor-start")
+                } catch {
+                    print("[SingingAudio] startMicrophoneMonitor failed: \(error.localizedDescription)")
+                    self.logAudioRoute("monitor-start-failed")
+                }
 
-                call.resolve([
-                    "ok": true
-                ])
+                // 伴奏
+                self.startInstrumentPlayback(instrumentSrc)
+                self.logAudioRoute("after-instrument-start")
+
+                call.resolve(["ok": true])
             } catch {
+                self.logAudioRoute("startRecording-catch")
                 call.reject("录音初始化失败: \(error.localizedDescription)")
             }
         }
@@ -75,16 +99,12 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func getLiveMetrics(_ call: CAPPluginCall) {
         guard isRecording, let recorder else {
-            call.resolve([
-                "level": 0,
-                "currentTime": 0
-            ])
+            call.resolve(["level": 0, "currentTime": 0])
             return
         }
 
         recorder.updateMeters()
         let power = recorder.averagePower(forChannel: 0)
-        // power: [-160, 0] -> [0, 1]
         let normalized = max(0.0, min(1.0, (power + 60.0) / 60.0))
         let elapsed = Date().timeIntervalSince(recordStartedAt ?? Date())
 
@@ -96,11 +116,20 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func updateMixSettings(_ call: CAPPluginCall) {
         applyMixSettings(from: call)
-        applyLiveMixSettings()
+        let iv = instrumentVolume
+        let vv = voiceVolume
+
+        if Thread.isMainThread {
+            applyLiveVolumes()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.applyLiveVolumes()
+            }
+        }
         call.resolve([
             "ok": true,
-            "instrumentVolume": instrumentVolume,
-            "voiceVolume": voiceVolume
+            "instrumentVolume": iv,
+            "voiceVolume": vv
         ])
     }
 
@@ -111,7 +140,8 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         recorder?.stop()
         player?.stop()
-        stopMicrophoneMonitoring()
+        endRouteObservation()
+        stopMicrophoneMonitor()
         isRecording = false
 
         let duration = Date().timeIntervalSince(recordStartedAt ?? Date())
@@ -127,6 +157,7 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let instrumentSrc = call.getString("instrumentSrc") ?? ""
+        applyMixSettings(from: call)
 
         guard let voiceUrl = resolveUrl(from: voiceUri) else {
             call.reject("voiceFileUri 无法解析")
@@ -148,7 +179,6 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             ])
         }
 
-        // 无法解析伴奏路径时，降级为“人声导出”为 m4a（避免流程中断）。
         guard let instrumentUrl = resolveUrl(from: instrumentSrc) else {
             exportSingleTrackM4A(inputUrl: voiceUrl, outputUrl: outputUrl) { success, duration, message in
                 if success {
@@ -181,79 +211,59 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func abortSession(_ call: CAPPluginCall) {
         recorder?.stop()
         player?.stop()
-        stopMicrophoneMonitoring()
+        endRouteObservation()
+        stopMicrophoneMonitor()
         isRecording = false
         call.resolve(["ok": true])
     }
 
-    private func requestRecordPermission(_ completion: @escaping (Bool) -> Void) {
-        let session = AVAudioSession.sharedInstance()
-        if #available(iOS 17.0, *) {
-            session.requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
-        } else {
-            session.requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
-        }
-    }
+    // MARK: - Audio Session
 
     private func configureAudioSessionForRecording() throws {
         let session = AVAudioSession.sharedInstance()
         preferredBluetoothInput = preferredBluetoothHFPInput()
-        let categoryOptions: AVAudioSession.CategoryOptions = preferredBluetoothInput == nil
-            ? [.allowBluetooth, .allowBluetoothA2DP]
-            : [.allowBluetooth]
+        logAudioRoute("before-configure-session")
 
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: categoryOptions)
+        // 录音场景优先稳定路由：playAndRecord + HFP（不启用 A2DP）
+        // A2DP 仅输出、不可作为录音输入，和麦克风同时使用时容易引发路由异常。
+        var categoryOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth]
+
+        // default 在有线耳机下耳返更稳定；结合 0.005s buffer 降低爆音风险
+        try session.setCategory(.playAndRecord, mode: .default, options: categoryOptions)
+        // 0.002 在部分机型会出现底噪/爆音，0.005 更稳定
         try session.setPreferredIOBufferDuration(0.005)
+        try session.setPreferredSampleRate(44100)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
         preferHeadsetInputIfAvailable()
+        logAudioRoute("after-prefer-input")
     }
 
-    private func preferredBluetoothHFPInput() -> AVAudioSessionPortDescription? {
-        let session = AVAudioSession.sharedInstance()
-        return session.availableInputs?.first(where: { $0.portType == .bluetoothHFP })
-    }
+    // MARK: - 耳返（独立 AVAudioEngine）
 
-    private func preferHeadsetInputIfAvailable() {
-        let session = AVAudioSession.sharedInstance()
-        if let bluetoothInput = preferredBluetoothInput {
-            try? session.setPreferredInput(bluetoothInput)
-            return
-        }
-
-        let preferredPortTypes: [AVAudioSession.Port] = [.headsetMic, .bluetoothLE]
-        guard let availableInputs = session.availableInputs else { return }
-        if let preferredInput = availableInputs.first(where: { preferredPortTypes.contains($0.portType) }) {
-            try? session.setPreferredInput(preferredInput)
-            return
-        }
-        try? session.setPreferredInput(nil)
-    }
-
-    private func startMicrophoneMonitoringIfPossible() throws {
-        stopMicrophoneMonitoring()
+    private func startMicrophoneMonitor() throws {
+        stopMicrophoneMonitor()
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
         let mixer = AVAudioMixerNode()
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        print("[SingingAudio] monitor input format: sr=\(inputFormat.sampleRate), ch=\(inputFormat.channelCount)")
 
         engine.attach(mixer)
+        // 显式使用输入格式，避免自动格式协商在部分设备上引入失真
         engine.connect(inputNode, to: mixer, format: inputFormat)
         engine.connect(mixer, to: engine.mainMixerNode, format: inputFormat)
         mixer.volume = voiceVolume
 
         engine.prepare()
         try engine.start()
+        print("[SingingAudio] monitor engine started: \(engine.isRunning)")
 
         monitorEngine = engine
         monitorMixer = mixer
     }
 
-    private func stopMicrophoneMonitoring() {
+    private func stopMicrophoneMonitor() {
         guard let engine = monitorEngine else { return }
         if let mixer = monitorMixer {
             engine.disconnectNodeInput(mixer)
@@ -266,77 +276,67 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         monitorEngine = nil
     }
 
-    private func startInstrumentPlaybackIfPossible(_ instrumentSrc: String) {
-        guard let instrumentUrl = resolveUrl(from: instrumentSrc) else { return }
-        do {
-            player = try AVAudioPlayer(contentsOf: instrumentUrl)
-            player?.volume = instrumentVolume
-            player?.prepareToPlay()
-            player?.play()
-        } catch {
-            // 伴奏播放失败不阻断录音
+    private func beginRouteObservation() {
+        endRouteObservation()
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isRecording else { return }
+            self.logAudioRoute("route-changed")
+            do {
+                try self.startMicrophoneMonitor()
+                self.logAudioRoute("after-monitor-restart")
+            } catch {
+                print("[SingingAudio] monitor restart failed: \(error.localizedDescription)")
+            }
         }
     }
 
+    private func endRouteObservation() {
+        if let obs = routeChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            routeChangeObserver = nil
+        }
+    }
+
+    // MARK: - 伴奏播放
+
+    private func startInstrumentPlayback(_ instrumentSrc: String) {
+        guard let instrumentUrl = resolveUrl(from: instrumentSrc) else {
+            print("[SingingAudio] instrument url resolve failed: \(instrumentSrc)")
+            return
+        }
+        do {
+            player = try AVAudioPlayer(contentsOf: instrumentUrl)
+            player?.volume = min(1.0, instrumentVolume)
+            player?.prepareToPlay()
+            let played = player?.play() ?? false
+            print("[SingingAudio] instrument play: ok=\(played), url=\(instrumentUrl.lastPathComponent)")
+        } catch {
+            // 伴奏播放失败不阻断录音
+            print("[SingingAudio] instrument play failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Mix Settings
+
     private func applyMixSettings(from call: CAPPluginCall) {
-        instrumentVolume = normalizedVolume(call.getDouble("instrumentVolume"), fallback: instrumentVolume)
-        voiceVolume = normalizedVolume(call.getDouble("voiceVolume"), fallback: voiceVolume)
+        if let iv = doubleFromCall(call, key: "instrumentVolume") {
+            instrumentVolume = normalizedVolume(iv, fallback: instrumentVolume)
+        }
+        if let vv = doubleFromCall(call, key: "voiceVolume") {
+            voiceVolume = normalizedVolume(vv, fallback: voiceVolume)
+        }
     }
 
-    private func normalizedVolume(_ value: Double?, fallback: Float) -> Float {
-        guard let value else { return fallback }
-        return Float(max(0.0, min(1.5, value)))
-    }
-
-    private func applyLiveMixSettings() {
-        player?.volume = instrumentVolume
+    private func applyLiveVolumes() {
+        player?.volume = min(1.0, max(0.0, instrumentVolume))
         monitorMixer?.volume = voiceVolume
     }
 
-    private func resolveUrl(from raw: String) -> URL? {
-        guard !raw.isEmpty else { return nil }
-
-        if raw.hasPrefix("file://") {
-            return URL(string: raw)
-        }
-
-        // Capacitor WebView 内的相对路径 (e.g. "/instruments/dagai.m4a")
-        // 对应 app bundle 里 public/ 目录下的文件
-        if raw.hasPrefix("/") {
-            let trimmed = String(raw.dropFirst())
-            if let bundlePath = Bundle.main.path(forResource: "public/\(trimmed)", ofType: nil) {
-                return URL(fileURLWithPath: bundlePath)
-            }
-            // 也可能在 tmp 目录（录音产物）
-            let tmpPath = NSTemporaryDirectory() + trimmed
-            if FileManager.default.fileExists(atPath: tmpPath) {
-                return URL(fileURLWithPath: tmpPath)
-            }
-            return URL(fileURLWithPath: raw)
-        }
-
-        if raw.hasPrefix("http://") || raw.hasPrefix("https://") || raw.hasPrefix("capacitor://") {
-            return URL(string: raw)
-        }
-
-        return URL(string: raw)
-    }
-
-    private func makeTempVoiceURL() -> URL {
-        let fileName = "voice_\(Int(Date().timeIntervalSince1970 * 1000)).m4a"
-        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
-    }
-
-    private func makeTempMixURL() -> URL {
-        let fileName = "mix_\(Int(Date().timeIntervalSince1970 * 1000)).m4a"
-        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
-    }
-
-    private func removeFileIfExists(at url: URL) {
-        if FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
+    // MARK: - 混音导出
 
     private func exportSingleTrackM4A(inputUrl: URL, outputUrl: URL, completion: @escaping (Bool, TimeInterval, String?) -> Void) {
         let asset = AVURLAsset(url: inputUrl)
@@ -420,17 +420,133 @@ public class SingingAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    // MARK: - Helpers
+
+    private func requestRecordPermission(_ completion: @escaping (Bool) -> Void) {
+        let session = AVAudioSession.sharedInstance()
+        session.requestRecordPermission { granted in
+            DispatchQueue.main.async { completion(granted) }
+        }
+    }
+
+    private func preferredBluetoothHFPInput() -> AVAudioSessionPortDescription? {
+        let session = AVAudioSession.sharedInstance()
+        return session.availableInputs?.first(where: { $0.portType == .bluetoothHFP })
+    }
+
+    private func logAudioRoute(_ tag: String) {
+        let session = AVAudioSession.sharedInstance()
+        let currentInputs = session.currentRoute.inputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let currentOutputs = session.currentRoute.outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let availableInputs = (session.availableInputs ?? []).map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        print(
+            """
+            [SingingAudio][\(tag)]
+              category=\(session.category.rawValue) mode=\(session.mode.rawValue)
+              sampleRate=\(session.sampleRate) preferredSampleRate=\(session.preferredSampleRate)
+              ioBuffer=\(session.ioBufferDuration) preferredIOBuffer=\(session.preferredIOBufferDuration)
+              currentInputs=[\(currentInputs)] currentOutputs=[\(currentOutputs)]
+              availableInputs=[\(availableInputs)]
+            """
+        )
+    }
+
+    private func preferHeadsetInputIfAvailable() {
+        let session = AVAudioSession.sharedInstance()
+        // 关键：不要强制选择蓝牙输入，否则会把路由锁死在 HFP，
+        // 造成“扬声器/有线无声，蓝牙有声”。
+        // 仅在有线耳机麦存在时指定输入；其他情况交给系统自动路由。
+        let preferredPortTypes: [AVAudioSession.Port] = [.headsetMic]
+        guard let availableInputs = session.availableInputs else { return }
+        if let preferredInput = availableInputs.first(where: { preferredPortTypes.contains($0.portType) }) {
+            try? session.setPreferredInput(preferredInput)
+            try? session.overrideOutputAudioPort(.none)
+            return
+        }
+
+        // 无有线麦克风时，清空 preferredInput，让系统按当前输出设备自动路由。
+        // 注意：这里不能强制 speaker，否则插着有线耳机时会把声音打到外放。
+        try? session.setPreferredInput(nil)
+        try? session.overrideOutputAudioPort(.none)
+    }
+
+    private func doubleFromCall(_ call: CAPPluginCall, key: String) -> Double? {
+        guard let opts = call.options else { return nil }
+        func value(from raw: Any?) -> Double? {
+            guard let raw else { return nil }
+            if raw is NSNull { return nil }
+            if let n = raw as? NSNumber { return n.doubleValue }
+            if let d = raw as? Double { return d }
+            if let i = raw as? Int { return Double(i) }
+            if let s = raw as? String, let v = Double(s) { return v }
+            return nil
+        }
+        func fromDict(_ dict: NSDictionary?) -> Double? {
+            guard let dict else { return nil }
+            return value(from: dict[key])
+        }
+        if let v = value(from: opts[key]) { return v }
+        if let v = fromDict(opts["options"] as? NSDictionary) { return v }
+        if let v = fromDict(opts["value"] as? NSDictionary) { return v }
+        return nil
+    }
+
+    private func normalizedVolume(_ value: Double?, fallback: Float) -> Float {
+        guard let value else { return fallback }
+        return Float(max(0.0, min(1.5, value)))
+    }
+
     private func preferredMixDuration(instrumentDuration: CMTime, voiceDuration: CMTime) -> CMTime {
         let voiceSeconds = CMTimeGetSeconds(voiceDuration)
         let instrumentSeconds = CMTimeGetSeconds(instrumentDuration)
-
         if voiceSeconds.isFinite, voiceSeconds > 0 {
             if instrumentSeconds.isFinite, instrumentSeconds > 0 {
                 return CMTimeMinimum(voiceDuration, instrumentDuration)
             }
             return voiceDuration
         }
-
         return instrumentDuration
+    }
+
+    private func resolveUrl(from raw: String) -> URL? {
+        guard !raw.isEmpty else { return nil }
+
+        if raw.hasPrefix("file://") {
+            return URL(string: raw)
+        }
+
+        if raw.hasPrefix("/") {
+            let trimmed = String(raw.dropFirst())
+            if let bundlePath = Bundle.main.path(forResource: "public/\(trimmed)", ofType: nil) {
+                return URL(fileURLWithPath: bundlePath)
+            }
+            let tmpPath = NSTemporaryDirectory() + trimmed
+            if FileManager.default.fileExists(atPath: tmpPath) {
+                return URL(fileURLWithPath: tmpPath)
+            }
+            return URL(fileURLWithPath: raw)
+        }
+
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") || raw.hasPrefix("capacitor://") {
+            return URL(string: raw)
+        }
+
+        return URL(string: raw)
+    }
+
+    private func makeTempVoiceURL() -> URL {
+        let fileName = "voice_\(Int(Date().timeIntervalSince1970 * 1000)).caf"
+        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
+    }
+
+    private func makeTempMixURL() -> URL {
+        let fileName = "mix_\(Int(Date().timeIntervalSince1970 * 1000)).m4a"
+        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
+    }
+
+    private func removeFileIfExists(at url: URL) {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

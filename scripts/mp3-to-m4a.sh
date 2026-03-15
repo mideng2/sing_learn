@@ -19,7 +19,7 @@ while IFS= read -r -d '' mp3; do
     continue
   fi
   echo "转换: $(basename "$mp3") -> $(basename "$m4a")"
-  ffmpeg -y -i "$mp3" -c:a aac -b:a 128k "$m4a" -hide_banner -loglevel error && ((count++))
+  ffmpeg -y -i "$mp3" -c:a aac -b:a 256k "$m4a" -hide_banner -loglevel error && ((count++))
 done < <(find . -type f -name "*.mp3" -print0)
 
 echo ""

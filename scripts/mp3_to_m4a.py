@@ -33,7 +33,7 @@ def main():
         print(f"转换: {mp3.name} -> {m4a.name}")
         try:
             subprocess.run(
-                ["ffmpeg", "-y", "-i", str(mp3), "-c:a", "aac", "-b:a", "128k", str(m4a)],
+                ["ffmpeg", "-y", "-i", str(mp3), "-c:a", "aac", "-b:a", "256k", str(m4a)],
                 capture_output=True,
                 check=True,
             )
