@@ -20,7 +20,7 @@ const KuromojiAnalyzer = KuromojiAnalyzerModule?.default ?? KuromojiAnalyzerModu
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 
-const TIME_REGEX = /^\[(\d{2}:\d{2}\.\d{3})\]\s*(.*)$/;
+const TIME_REGEX = /^\[(\d{2}:\d{2}\.\d{2,3})\]\s*(.*)$/;
 
 function parseLyrics(text) {
   if (!text || typeof text !== "string") return new Map();
@@ -46,10 +46,12 @@ function parseLyrics(text) {
 }
 
 function timeToSeconds(timeStr) {
-  const match = timeStr.match(/\[(\d{2}):(\d{2})\.(\d{3})\]/);
+  const match = timeStr.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\]/);
   if (!match) return 0;
-  const [, min, sec, ms] = match;
-  return parseInt(min, 10) * 60 + parseInt(sec, 10) + parseInt(ms, 10) / 1000;
+  const [, min, sec, msRaw] = match;
+  const msNum = parseInt(msRaw, 10);
+  const ms = msRaw.length === 2 ? msNum * 10 : msNum;
+  return parseInt(min, 10) * 60 + parseInt(sec, 10) + ms / 1000;
 }
 
 function mergeLyricsFromStrings(jpRaw, zhRaw) {
@@ -97,8 +99,8 @@ async function addKanaAndRomaji(merged, kuroshiro) {
   return merged;
 }
 
-const inputFile = process.argv[2] || "src/assets/lyrics/歌词.js";
-const outputDir = process.argv[3] || dirname(inputFile);
+const inputFile = process.argv[2] || "src/assets/lyrics_origin.js";
+const outputDir = process.argv[3] || "public/lyrics";
 
 (async () => {
   try {

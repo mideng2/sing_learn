@@ -3,4 +3,4 @@
 - 自动生成的 commit message 必须使用中文。
 - 格式遵循：<类型>: <描述>。
 - 类型包括：feat (新功能), fix (修补 bug), refactor (重构), style (格式修改), docs (文档)。
-- 描述应概括改动的核心逻辑，例如：“refactor: 将内联样式迁移至 CSS Modules，提升可读性”。
+- 描述应概括改动的核心逻辑，例如：“refactor: 重构播放功能”
