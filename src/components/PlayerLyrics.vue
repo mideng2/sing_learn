@@ -20,6 +20,13 @@ const currentLineIndex = computed(() => {
   return idx;
 });
 
+const upcomingLineIndex = computed(() => {
+  if (!props.lyrics.length) return -1;
+  const cur = currentLineIndex.value;
+  const next = cur + 1;
+  return next >= 0 && next < props.lyrics.length ? next : -1;
+});
+
 function scrollToActive() {
   const wrap = wrapRef.value;
   if (!wrap) return;
@@ -53,7 +60,15 @@ onBeforeUnmount(() => {
   <div ref="wrapRef" class="lyrics-wrap">
     <div class="lyrics-spacer" :style="{ height: spacerH + 'px' }" />
     <div class="lyrics-inner">
-      <div v-for="(line, i) in lyrics" :key="i" class="lyric-line" :class="{ active: i === currentLineIndex }">
+      <div
+        v-for="(line, i) in lyrics"
+        :key="i"
+        class="lyric-line"
+        :class="{
+          active: i === currentLineIndex,
+          upcoming: i === upcomingLineIndex,
+        }"
+      >
         <p v-for="(field, idx) in visibleFields" :key="field.key" :class="`lyric-${idx} lyric-${field.key}`" v-show="line[field.key]">{{ line[field.key] }}</p>
       </div>
     </div>
@@ -75,7 +90,7 @@ onBeforeUnmount(() => {
 .lyrics-inner {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 12px;
 }
 
 .lyric-line {
@@ -97,21 +112,33 @@ onBeforeUnmount(() => {
       color: #004c72;
     }
   }
+
+  &.upcoming {
+    opacity: 0.8;
+    transform: scale(0.985);
+
+    .lyric-0 {
+      color: #03547c;
+    }
+    .lyric-1 {
+      color: #015d86;
+    }
+  }
 }
 
 .lyric-0 {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: #0369a1;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .lyric-1 {
   margin: 3px 0 0;
   font-size: 1rem;
   color: #014c72;
-  font-weight: 500;
+  font-weight: 600;
   opacity: 0.9;
   line-height: 1.4;
 }

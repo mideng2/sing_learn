@@ -1,5 +1,6 @@
 <script setup lang="js">
 import { ref, computed, onMounted, Teleport, Transition } from "vue";
+import { storeToRefs } from "pinia";
 import { useRoute, useRouter } from "vue-router";
 import { useSongStore } from "@/stores/songStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
@@ -16,6 +17,7 @@ import Icon from "@/components/common/Icon.vue";
 const route = useRoute();
 const router = useRouter();
 const songStore = useSongStore();
+const { lyricFields } = storeToRefs(songStore);
 
 const song = computed(() => songStore.getSongById(route.params.id));
 
@@ -72,15 +74,6 @@ async function loadLyrics(path) {
     lyrics.value = [];
   }
 }
-
-const allLyricFields = [
-  { key: "jp", label: "原歌词" },
-  { key: "jm", label: "假名" },
-  { key: "zh", label: "中文翻译" },
-  { key: "rm", label: "罗马音" },
-];
-
-const lyricFields = ref(allLyricFields.map((f) => ({ ...f, visible: f.key !== "rm" })));
 
 const visibleFields = computed(() => lyricFields.value.filter((f) => f.visible));
 
@@ -172,7 +165,11 @@ onMounted(() => {
       @toggle-sing="onToggleSing"
     />
 
-    <LyricsSettingsModal v-model="showLyricsModal" :fields="lyricFields" @update:fields="lyricFields = $event" />
+    <LyricsSettingsModal
+      v-model="showLyricsModal"
+      :fields="lyricFields"
+      @update:fields="songStore.setLyricFields"
+    />
 
     <PlayerVolumeModal
       v-model="showVolumeModal"
