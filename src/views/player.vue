@@ -9,6 +9,7 @@ import PlayerLyrics from "@/components/PlayerLyrics.vue";
 import PlayerControls from "@/components/PlayerControls.vue";
 import PlayerSingPanel from "@/components/PlayerSingPanel.vue";
 import PlayerVolumeModal from "@/components/PlayerVolumeModal.vue";
+import PlayerRateModal from "@/components/PlayerRateModal.vue";
 import LyricsSettingsModal from "@/components/LyricsSettingsModal.vue";
 import SingReviewModal from "@/components/SingReviewModal.vue";
 import OceanFloor from "@/components/OceanFloor.vue";
@@ -33,7 +34,7 @@ const {
   beginDrag,
   updateDrag,
   endDrag,
-  cycleRate,
+  setPlaybackRate,
 } = useAudioPlayer(() => song.value?.src);
 
 const {
@@ -79,6 +80,7 @@ const visibleFields = computed(() => lyricFields.value.filter((f) => f.visible))
 
 const showLyricsModal = ref(false);
 const showVolumeModal = ref(false);
+const showRateModal = ref(false);
 const lyricCurrentTime = computed(() => (isRecording.value ? singCurrentTime.value : currentTime.value));
 const controlsCurrentTime = computed(() => (isRecording.value ? singCurrentTime.value : currentTime.value));
 
@@ -105,6 +107,24 @@ function onSaveReview(customName) {
 
 async function onDiscardReview() {
   await discardReviewRecord();
+}
+
+async function onDownloadReview(payload) {
+  const record = payload?.record;
+  if (!record) return;
+  const name = String(payload?.name || record.customName || record.songName || "我的演唱").trim();
+  const fakeRecord = {
+    ...record,
+    customName: name,
+    songName: name,
+  };
+  try {
+    const module = await import("@/utils/recordingDownload.js");
+    const { downloadRecording } = module;
+    await downloadRecording({ record: fakeRecord, baseName: name });
+  } catch (err) {
+    console.error("[Player] download review failed", err);
+  }
 }
 
 function onInstrumentVolumeChange(value) {
@@ -156,7 +176,7 @@ onMounted(() => {
       :sing-button-label="singButtonLabel"
       :wave-levels="waveLevels"
       @toggle-play="togglePlay"
-      @cycle-rate="cycleRate"
+      @open-rate-settings="showRateModal = true"
       @open-volume-settings="showVolumeModal = true"
       @open-lyrics-settings="showLyricsModal = true"
       @drag-start="beginDrag"
@@ -165,11 +185,13 @@ onMounted(() => {
       @toggle-sing="onToggleSing"
     />
 
-    <LyricsSettingsModal
-      v-model="showLyricsModal"
-      :fields="lyricFields"
-      @update:fields="songStore.setLyricFields"
+    <PlayerRateModal
+      v-model="showRateModal"
+      :playback-rate="playbackRate"
+      @update:playback-rate="setPlaybackRate"
     />
+
+    <LyricsSettingsModal v-model="showLyricsModal" :fields="lyricFields" @update:fields="songStore.setLyricFields" />
 
     <PlayerVolumeModal
       v-model="showVolumeModal"
@@ -179,7 +201,13 @@ onMounted(() => {
       @update:voice-volume="onVoiceVolumeChange"
     />
 
-    <SingReviewModal :model-value="isReviewing && !!reviewRecord" :review-record="reviewRecord" @save-review="onSaveReview" @discard-review="onDiscardReview" />
+    <SingReviewModal
+      :model-value="isReviewing && !!reviewRecord"
+      :review-record="reviewRecord"
+      @save-review="onSaveReview"
+      @discard-review="onDiscardReview"
+      @download-review="onDownloadReview"
+    />
 
     <Teleport to="body">
       <Transition name="loading-fade">

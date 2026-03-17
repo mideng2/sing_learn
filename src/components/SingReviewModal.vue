@@ -9,7 +9,7 @@ const props = defineProps({
   reviewRecord: { type: Object, default: null },
 });
 
-const emit = defineEmits(["save-review", "discard-review"]);
+const emit = defineEmits(["save-review", "discard-review", "download-review"]);
 const nameDraft = ref("");
 
 function getDefaultName(record) {
@@ -48,6 +48,13 @@ function onSave() {
 function onDiscard() {
   emit("discard-review");
 }
+
+function onDownload() {
+  emit("download-review", {
+    record: props.reviewRecord,
+    name: String(nameDraft.value || "").trim(),
+  });
+}
 </script>
 
 <template>
@@ -66,7 +73,13 @@ function onDiscard() {
           </div>
           <div class="name-editor">
             <label class="name-label">录音名称</label>
-            <input v-model.trim="nameDraft" class="name-input" type="text" maxlength="64" placeholder="请输入录音名称" />
+            <input
+              v-model.trim="nameDraft"
+              class="name-input"
+              type="text"
+              maxlength="64"
+              placeholder="请输入录音名称"
+            />
           </div>
           <audio
             class="review-audio"
@@ -75,6 +88,7 @@ function onDiscard() {
             preload="metadata"
           />
           <div class="review-actions">
+            <button class="action-btn btn-download" @click="onDownload">下载</button>
             <button class="action-btn btn-save" @click="onSave">保存到歌单</button>
             <button class="action-btn btn-delete" @click="onDiscard">删除</button>
           </div>
@@ -196,7 +210,7 @@ function onDiscard() {
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.85);
   color: #0c4a6e;
-  font-size: 0.82rem;
+  font-size: 1rem; /* iOS 输入至少 16px，避免弹窗被放大 */
 }
 
 .review-actions {
@@ -227,5 +241,10 @@ function onDiscard() {
 .btn-delete {
   color: #9f1239;
   background: rgba(251, 207, 232, 0.5);
+}
+
+.btn-download {
+  color: #0369a1;
+  background: linear-gradient(180deg, rgba(186, 230, 253, 0.95) 0%, rgba(125, 211, 252, 0.6) 100%);
 }
 </style>

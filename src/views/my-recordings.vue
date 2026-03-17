@@ -1,11 +1,8 @@
 <script setup lang="js">
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import { Share } from "@capacitor/share";
 import { useRecordingStore } from "@/stores/recordingStore";
-
-const SingingAudio = registerPlugin("SingingAudio");
+import { downloadRecording, sanitizeName } from "@/utils/recordingDownload";
 const recordingStore = useRecordingStore();
 const { recordings } = storeToRefs(recordingStore);
 const nameDraftMap = ref({});
@@ -20,18 +17,6 @@ function formatDate(timestamp) {
   const hh = `${date.getHours()}`.padStart(2, "0");
   const mi = `${date.getMinutes()}`.padStart(2, "0");
   return `${mm}-${dd} ${hh}:${mi}`;
-}
-
-/** 用于下载文件名的日期格式：歌名+时间，如 20250315-2030 */
-function formatDateForFileName(timestamp) {
-  if (!timestamp) return "";
-  const date = new Date(timestamp);
-  const y = date.getFullYear();
-  const mm = `${date.getMonth() + 1}`.padStart(2, "0");
-  const dd = `${date.getDate()}`.padStart(2, "0");
-  const hh = `${date.getHours()}`.padStart(2, "0");
-  const mi = `${date.getMinutes()}`.padStart(2, "0");
-  return `${y}${mm}${dd}-${hh}${mi}`;
 }
 
 function formatDuration(durationMs) {
@@ -85,59 +70,8 @@ function saveName(record) {
   nameDraftMap.value[record.id] = updated.customName;
 }
 
-function sanitizeName(name) {
-  return String(name || "")
-    .trim()
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
-    .slice(0, 64);
-}
-
 async function downloadItem(record) {
-  const sourceUrl = record.mixFileUriWeb || record.mixFileUri;
-  if (!sourceUrl) return;
-  const songName = sanitizeName(record.songName || getDisplayName(record)) || "我的演唱";
-  const timePart = formatDateForFileName(record.createdAt);
-  const baseName = timePart ? `${songName}_${timePart}` : songName;
-  const extension = String(record.format || "m4a").toLowerCase();
-  const fileName = `${baseName}.${extension}`;
-
-  try {
-    if (Capacitor.isNativePlatform()) {
-      let exportUri = record.mixFileUri;
-      try {
-        const prepared = await SingingAudio.prepareExportFile({
-          sourceUri: record.mixFileUri,
-          fileName,
-        });
-        if (prepared?.fileUri) {
-          exportUri = prepared.fileUri;
-        }
-      } catch (prepareErr) {
-        console.warn("[Recordings] prepareExportFile failed, fallback to source uri", prepareErr);
-      }
-      await Share.share({
-        title: "导出录音",
-        text: fileName,
-        url: exportUri,
-        dialogTitle: "保存录音到本地",
-      });
-      return;
-    }
-
-    const response = await fetch(sourceUrl);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = blobUrl;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(blobUrl);
-  } catch (error) {
-    console.error("[Recordings] download failed", error);
-    window.alert("下载失败，请稍后重试。");
-  }
+  await downloadRecording({ record });
 }
 </script>
 
@@ -267,7 +201,7 @@ async function downloadItem(record) {
     border: 1px solid rgba(56, 189, 248, 0.28);
     background: rgba(248, 250, 252, 0.9);
     color: #0c4a6e;
-    font-size: 0.8rem;
+    font-size: 1rem; /* iOS 输入至少 16px，避免放大 */
     transition: border-color 0.2s, box-shadow 0.2s;
 
     &::placeholder {

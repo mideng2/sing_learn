@@ -19,7 +19,11 @@ function close() {
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="modelValue" class="modal-overlay" @click.self="close">
+      <div
+        v-if="modelValue"
+        class="modal-overlay"
+        @click.self="close"
+      >
         <div class="modal-panel">
           <div class="modal-header">
             <span class="modal-title">{{ title }}</span>
@@ -61,6 +65,7 @@ function close() {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  touch-action: none;
 }
 
 .modal-panel {

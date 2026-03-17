@@ -95,11 +95,11 @@ export function useAudioPlayer(getSrc) {
     }
   }
 
-  function cycleRate() {
-    const idx = rateOptions.indexOf(playbackRate.value);
-    const next = rateOptions[(idx + 1) % rateOptions.length];
-    playbackRate.value = next;
-    if (howl) howl.rate(next);
+  function setPlaybackRate(rate) {
+    const clamped = Math.min(2, Math.max(0.5, Number(rate) || 1));
+    const rounded = Math.round(clamped * 10) / 10;
+    playbackRate.value = rounded;
+    if (howl) howl.rate(rounded);
   }
 
   const progressPercent = computed(() => {
@@ -131,7 +131,7 @@ export function useAudioPlayer(getSrc) {
     beginDrag,
     updateDrag,
     endDrag,
-    cycleRate,
+    setPlaybackRate,
     destroy,
   };
 }

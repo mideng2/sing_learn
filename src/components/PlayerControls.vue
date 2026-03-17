@@ -14,7 +14,16 @@ const props = defineProps({
   waveLevels: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(["toggle-play", "cycle-rate", "open-lyrics-settings", "open-volume-settings", "drag-start", "drag-move", "drag-end", "toggle-sing"]);
+const emit = defineEmits([
+  "toggle-play",
+  "open-rate-settings",
+  "open-lyrics-settings",
+  "open-volume-settings",
+  "drag-start",
+  "drag-move",
+  "drag-end",
+  "toggle-sing",
+]);
 
 const progressBarRef = ref(null);
 
@@ -107,9 +116,9 @@ onBeforeUnmount(() => {
 
     <div class="btn-row">
       <div class="btn-side btn-side-left">
-        <button class="btn-chip btn-rate" @click="emit('cycle-rate')">
+        <button class="btn-chip btn-rate" @click="emit('open-rate-settings')">
           <!-- <img :src="rateIcon" alt="" class="icon-rate" /> -->
-          <span class="rate-badge">{{ playbackRate === 1 ? "1.0x" : playbackRate + "x" }}</span>
+          <span class="rate-badge">{{ playbackRate.toFixed(1) }}x</span>
           <span>倍速</span>
           <!-- <span class="rate-badge">{{ playbackRate === 1 ? "1.0x" : playbackRate + "x" }}</span> -->
         </button>
